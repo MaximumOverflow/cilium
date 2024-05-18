@@ -1,8 +1,12 @@
-use crate::utilities::impl_from_bytes;
+use std::borrow::Borrow;
 use std::fmt::{Debug, Formatter};
+use std::io::{Cursor, Error, ErrorKind, Read, Seek, SeekFrom};
 use std::mem::size_of;
 use std::ops::Range;
 use std::sync::Arc;
+use owning_ref::ArcRef;
+
+use crate::utilities::{FromByteStream, impl_from_byte_stream, read_bytes_slice_from_stream};
 
 #[repr(C)]
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -13,50 +17,38 @@ pub struct PEFile {
 }
 
 impl PEFile {
-	pub fn resolve_rva(&self, rva: u32) -> Option<(&[u8], usize)> {
+	pub fn resolve_rva(&self, rva: u32) -> Option<(&Section, ArcRef<[u8]>, usize)> {
 		let section = self.sections
 			.iter()
 			.find(|s| s.virtual_data_range().contains(&rva))?;
 		let idx = rva - section.header.virtual_address;
-		Some((&section.data, idx as usize))
+		Some((section, section.data.clone().map(|s| &s[idx as usize..]), idx as usize))
 	}
 }
 
-impl TryFrom<&[u8]> for PEFile {
-	type Error = &'static str;
-	fn try_from(mut value: &[u8]) -> Result<Self, Self::Error> {
-		if value.len() < DOS_HDR_SIZE {
-			return Err("Invalid buffer size");
-		}
-		let dos_header = DOSHeader::try_from(&value[..DOS_HDR_SIZE])?;
+impl FromByteStream for PEFile {
+	fn read(stream: &mut Cursor<&[u8]>) -> std::io::Result<Self> {
+		let dos_header = DOSHeader::read(stream)?;
+		stream.set_position(dos_header.new_header_start as u64);
+		let pe_header = PEHeader::read(stream)?;
 
-		if value.len() < dos_header.new_header_start as usize {
-			return Err("Invalid buffer size");
-		}
-		let pe_header = PEHeader::try_from(&value[dos_header.new_header_start as usize..])?;
+		stream.set_position(
+			dos_header.new_header_start as u64
+				+ size_of::<ImageFileHeader>() as u64 + 4
+				+ pe_header.image_file_header.size_of_optional_header as u64
+		);
 
-		let mut sections_offset
-			= dos_header.new_header_start as usize
-			+ FILE_HDR_SIZE + 4
-			+ pe_header.image_file_header.size_of_optional_header as usize;
-
-		let mut section_headers = &value[sections_offset..];
 		let mut sections = Vec::with_capacity(pe_header.image_file_header.number_of_sections as usize);
 		for _ in 0..pe_header.image_file_header.number_of_sections as usize {
-			let Some(header) = section_headers.get(0..SEC_HDR_SIZE) else {
-				return Err("Invalid section header offset");
-			};
-			let header = SectionHeader::try_from(header)?;
-			let start = header.pointer_to_raw_data as usize;
-			let end = start + header.size_of_raw_data as usize;
-			let Some(data) = value.get(start..end) else {
-				return Err("Invalid section data offset");
-			};
+			let header = SectionHeader::read(stream)?;
+			let position = stream.position();
+			stream.set_position(header.pointer_to_raw_data as u64);
+			let data = read_bytes_slice_from_stream(stream, header.size_of_raw_data as usize)?;
 			sections.push(Section {
 				header,
-				data: Arc::from(data),
+				data: ArcRef::new(Arc::from(data)),
 			});
-			section_headers = &section_headers[size_of::<SectionHeader>()..];
+			stream.set_position(position);
 		}
 
 		Ok(Self { dos_header, pe_header, sections })
@@ -87,7 +79,7 @@ pub struct DOSHeader {
 	pub new_header_start: u32,
 }
 
-impl_from_bytes!(DOSHeader, 0x5A4D);
+impl_from_byte_stream!(DOSHeader, 0x5A4D);
 
 #[repr(C)]
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -97,26 +89,13 @@ pub struct PEHeader {
 	pub image_optional_header: ImageOptionalHeader,
 }
 
-impl TryFrom<&[u8]> for PEHeader {
-	type Error = &'static str;
-	fn try_from(mut value: &[u8]) -> Result<Self, Self::Error> {
-		if value.len() < FILE_HDR_SIZE + 4 {
-			return Err("Invalid buffer size");
+impl FromByteStream for PEHeader {
+	fn read(stream: &mut Cursor<&[u8]>) -> std::io::Result<Self> {
+		if u32::read(stream)? != 0x4550 {
+			return Err(Error::from(ErrorKind::InvalidData));
 		}
-		if u32::from_le_bytes(value[0..4].try_into().unwrap()) != 0x4550 {
-			return Err("Magic value does not match");
-		}
-		value = &value[4..];
-		let image_file_header = ImageFileHeader::try_from(
-			&value[..FILE_HDR_SIZE]
-		)?;
-		value = &value[FILE_HDR_SIZE..];
-		if value.len() < image_file_header.size_of_optional_header as usize {
-			return Err("Invalid buffer size");
-		}
-		let image_optional_header = ImageOptionalHeader::try_from(
-			&value[..image_file_header.size_of_optional_header as usize]
-		)?;
+		let image_file_header = ImageFileHeader::read(stream)?;
+		let image_optional_header = ImageOptionalHeader::read(stream)?;
 		Ok(Self {
 			magic: 0x4550,
 			image_file_header,
@@ -137,7 +116,7 @@ pub struct ImageFileHeader {
 	pub characteristics: u16,
 }
 
-impl_from_bytes!(ImageFileHeader);
+impl_from_byte_stream!(ImageFileHeader);
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -175,7 +154,7 @@ pub struct ImageOptionalHeader32 {
 	pub data_directories: [DataDirectory; 16],
 }
 
-impl_from_bytes!(ImageOptionalHeader32, 0x010B);
+impl_from_byte_stream!(ImageOptionalHeader32, 0x010B);
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -212,7 +191,7 @@ pub struct ImageOptionalHeader64 {
 	pub data_directories: [DataDirectory; 16],
 }
 
-impl_from_bytes!(ImageOptionalHeader64, 0x020B);
+impl_from_byte_stream!(ImageOptionalHeader64, 0x020B);
 
 #[repr(C, u16)]
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -222,19 +201,19 @@ pub enum ImageOptionalHeader {
 	PE64(ImageOptionalHeader64) = 0x020B,
 }
 
-impl TryFrom<&[u8]> for ImageOptionalHeader {
-	type Error = &'static str;
-	fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-		if value.is_empty() {
-			return Ok(Self::None);
-		}
-		if value.len() < 2 {
-			return Err("Invalid buffer size");
-		}
-		match u16::from_le_bytes(value[..2].try_into().unwrap()) {
-			0x010B => Ok(Self::PE32(ImageOptionalHeader32::try_from(value)?)),
-			0x020B => Ok(Self::PE64(ImageOptionalHeader64::try_from(value)?)),
-			_ => Err("Magic value does not match")
+impl FromByteStream for ImageOptionalHeader {
+	fn read(stream: &mut Cursor<&[u8]>) -> std::io::Result<Self> {
+		let start = stream.position();
+		match u16::read(stream)? {
+			0x010B => {
+				stream.set_position(start);
+				Ok(Self::PE32(ImageOptionalHeader32::read(stream)?))
+			}
+			0x020B => {
+				stream.set_position(start);
+				Ok(Self::PE64(ImageOptionalHeader64::read(stream)?))
+			}
+			_ => Err(Error::from(ErrorKind::InvalidData)),
 		}
 	}
 }
@@ -246,7 +225,7 @@ pub struct DataDirectory {
 	pub size: u32,
 }
 
-impl_from_bytes!(DataDirectory);
+impl_from_byte_stream!(DataDirectory);
 
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -282,12 +261,12 @@ pub struct SectionHeader {
 	pub characteristics: u32,
 }
 
-impl_from_bytes!(SectionHeader);
+impl_from_byte_stream!(SectionHeader);
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct Section {
 	pub header: SectionHeader,
-	pub data: Arc<[u8]>,
+	pub data: ArcRef<[u8]>,
 }
 
 impl Section {
@@ -308,10 +287,3 @@ impl Debug for Section {
 		dbg.finish()
 	}
 }
-
-const DOS_HDR_SIZE: usize = size_of::<DOSHeader>();
-const SEC_HDR_SIZE: usize = size_of::<SectionHeader>();
-const DATA_DIR_SIZE: usize = size_of::<DataDirectory>();
-const FILE_HDR_SIZE: usize = size_of::<ImageFileHeader>();
-const OPT_PE32_SIZE: usize = size_of::<ImageOptionalHeader32>();
-const OPT_PE64_SIZE: usize = size_of::<ImageOptionalHeader64>();

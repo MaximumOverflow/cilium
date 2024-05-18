@@ -1,9 +1,18 @@
-use crate::pe::{PEFile, PEHeader};
+use std::io::Cursor;
+use crate::assembly::Assembly;
+use crate::pe::PEFile;
+use crate::utilities::FromByteStream;
 
 mod pe;
+mod assembly;
+mod utilities;
+mod metadata_token;
+mod heaps;
 
 fn main() {
-    let bytes = std::fs::read("target/debug/cilium.exe").unwrap();
-    let pe = PEFile::try_from(bytes.as_slice()).unwrap();
-    println!("{pe:#X?}");
+    let bytes = std::fs::read("TestAssembly.dll").unwrap();
+    let mut cursor = Cursor::new(bytes.as_slice());
+    let pe = PEFile::read(&mut cursor).unwrap();
+    let assembly = Assembly::try_from(pe).unwrap();
+    dbg!(assembly);
 }
