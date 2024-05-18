@@ -1,3 +1,4 @@
+use std::alloc::Layout;
 use std::io::{Cursor, Error, ErrorKind, Read};
 use std::sync::Arc;
 use bitflags::bitflags;
@@ -5,7 +6,9 @@ use bitflags::bitflags;
 use owning_ref::ArcRef;
 use cilium_derive::{FromRepr, Table};
 
-use crate::heaps::{MetadataHeap, MetadataHeapKind, StringIndex};
+use crate::heaps::{GuidIndex, MetadataHeap, MetadataHeapKind, StringIndex};
+use crate::indices::coded_index::{CodedIndexKind, TypeDefOrRef};
+use crate::indices::sizes::*;
 use crate::utilities::{enumerate_set_bits, FromByteStream, impl_from_byte_stream};
 
 #[derive(Debug)]
@@ -46,28 +49,29 @@ impl TryFrom<ArcRef<[u8]>> for TableHeap {
 		impl_from_byte_stream!(Header);
 
 		let mut stream = Cursor::new(value.as_ref());
-		let Header { heap_sizes, valid, sorted, .. } = Header::read(&mut stream)?;
+		let Header { heap_sizes, valid, .. } = Header::read(&mut stream, &())?;
 
 		let table_count = valid.count_ones() as usize;
-		let mut table_sizes = [0u32; 64];
+		let mut table_sizes = vec![0u32; 64];
 
-		unsafe {
-			stream.read_exact(std::slice::from_raw_parts_mut(table_sizes.as_mut_ptr() as *mut u8, 4 * table_count))?;
+		for i in enumerate_set_bits(valid) {
+			let mut bytes = 0u32.to_ne_bytes();
+			stream.read_exact(&mut bytes)?;
+			table_sizes[i] = u32::from_le_bytes(bytes);
 		}
 
-		#[cfg(target_endian = "big")]
-		for i in 0..table_count {
-			table_sizes[i] = table_sizes[i].to_be();
-		}
+		let idx_sizes = IndexSizes::new(heap_sizes, table_sizes.as_slice().try_into().unwrap());
 
 		let mut tables: Vec<Arc<dyn Table>> = Vec::with_capacity(table_count);
 		for (i, bit) in enumerate_set_bits(valid).enumerate() {
-			let len = table_sizes[i] as usize;
+			let len = table_sizes[bit] as usize;
 			let Some(kind) = TableKind::from_repr(bit) else {
 				return Err(ErrorKind::InvalidData.into());
 			};
+
 			tables.push(match kind {
-				TableKind::Module => Arc::new(ModuleTable::read(&mut stream, heap_sizes, len)?),
+				TableKind::Module => Arc::new(ModuleTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::TypeDef => Arc::new(TypeDefTable::read(&mut stream, &idx_sizes, len)?),
 				_ => unimplemented!("Unimplemented table {:?}", kind),
 			})
 		}
@@ -137,13 +141,15 @@ pub enum TableKind {
 pub trait Table {
 	fn len(&self) -> usize;
 	fn kind(&self) -> TableKind;
-	fn row_size(&self) -> usize;
 }
 
-#[derive(Debug, Table)]
+#[derive(Debug, Clone, Table)]
 pub struct Module {
 	generation: u16,
 	name: StringIndex,
+	mv_id: GuidIndex,
+	enc_id: GuidIndex,
+	enc_base_id: GuidIndex,
 }
 
 bitflags! {
@@ -231,9 +237,22 @@ bitflags! {
 
 impl_from_byte_stream!(TypeAttributes);
 
-#[derive(Debug, Table)]
+#[derive(Debug, Clone, Table)]
 pub struct TypeDef {
 	flags: TypeAttributes,
 	type_name: StringIndex,
 	type_namespace: StringIndex,
+	extends: TypeDefOrRef,
+	field_list: FieldIndex,
+	method_list: MethodIndex,
+}
+
+#[derive(Debug, Clone, Table)]
+pub struct Field {
+	// TODO
+}
+
+#[derive(Debug, Clone, Table)]
+pub struct Method {
+	// TODO
 }

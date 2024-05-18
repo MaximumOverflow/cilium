@@ -1,6 +1,6 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Data, DeriveInput, Field, Type};
+use syn::{Data, DeriveInput, Field, Path, Type};
 use syn::parse::Parse;
 
 pub fn derive(tokens: proc_macro::TokenStream) -> TokenStream {
@@ -19,46 +19,45 @@ pub fn derive(tokens: proc_macro::TokenStream) -> TokenStream {
     };
 
     let table = format_ident!("{}Table", ident);
-    let reads = data.fields.iter().map(
-        |Field {
-             attrs,
-             vis,
-             mutability,
-             ident,
-             colon_token,
-             ty,
-         } |match ty {
-            Type::Path(path) => match path.path.get_ident() {
-                Some(ty_ident) if ty_ident == "StringIndex" => quote! {
-                   #ident: StringIndex::read(stream, string_idx_size)?
-                },
-                _ => quote!(#ident: <#ty>::read(stream)?)
-            }
-            _ => quote!(#ident: <#ty>::read(stream)?)
+    let index = format_ident!("{}Index", ident);
+
+    let read_with = attrs.iter().find_map(|a| {
+        let ident = a.path().get_ident()?;
+        if ident != "read_with" {
+            return None;
+        }
+        Some(a.parse_args::<Path>().unwrap())
+    });
+
+    let read_impl = match read_with {
+        Some(path) => quote! {
+            #path(stream, idx_sizes, len)
         },
-    );
+        None => {
+            let reads = data.fields.iter().map(
+                |Field { ty, ident, .. }| quote!(#ident: <#ty>::read(stream, idx_sizes.as_ref())?),
+            );
+
+            quote! {
+                let mut rows = Vec::with_capacity(len);
+                for i in 0..len {
+                    let row = #ident { #(#reads),* };
+                    rows.push(row)
+                }
+                Ok(Self { rows })
+            }
+        },
+    };
 
     quote! {
         #[derive(Debug)]
         #vis struct #table {
-            row_size: usize,
             rows: Vec<#ident>,
         }
 
         impl #table {
-            pub fn read(stream: &mut Cursor<&[u8]>, heap_sizes: u8, len: usize) -> std::io::Result<Self> {
-                let start = stream.position() as usize;
-                let blob_idx_size = 2 + 2 * ((heap_sizes & 0x4) != 0) as usize;
-                let guid_idx_size = 2 + 2 * ((heap_sizes & 0x2) != 0) as usize;
-                let string_idx_size = 2 + 2 * ((heap_sizes & 0x1) != 0) as usize;
-
-                let mut rows = Vec::with_capacity(len);
-                for _ in 0..len {
-                    rows.push(#ident { #(#reads),* })
-                }
-
-                let row_size = (stream.position() as usize - start) / len;
-                Ok(Self { rows, row_size })
+            pub fn read(stream: &mut Cursor<&[u8]>, idx_sizes: &IndexSizes, len: usize) -> std::io::Result<Self> {
+                #read_impl
             }
         }
 
@@ -70,10 +69,21 @@ pub fn derive(tokens: proc_macro::TokenStream) -> TokenStream {
             fn kind(&self) -> TableKind {
 				TableKind::#ident
 			}
-
-			fn row_size(&self) -> usize {
-				self.row_size
-			}
 		}
+
+        #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+        pub struct #index(usize);
+
+        impl FromByteStream for #index {
+            type Deps = IndexSizes;
+            fn read(stream: &mut Cursor<&[u8]>, deps: &Self::Deps) -> std::io::Result<Self> {
+                let table_sizes: &TableIndexSizes = deps.as_ref();
+                let table_size = table_sizes.0[TableKind::#ident as usize];
+                let size = 2 + 2 * (table_size > 65536) as usize;
+                let mut value = 0usize.to_ne_bytes();
+                stream.read_exact(&mut value[..size])?;
+                Ok(Self(usize::from_le_bytes(value)))
+            }
+        }
     }
 }

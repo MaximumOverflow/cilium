@@ -12,7 +12,7 @@ mod heaps;
 fn main() {
     let bytes = std::fs::read("TestAssembly.dll").unwrap();
     let mut cursor = Cursor::new(bytes.as_slice());
-    let pe = PEFile::read(&mut cursor).unwrap();
+    let pe = PEFile::read(&mut cursor, &()).unwrap();
     let assembly = Assembly::try_from(pe).unwrap();
     dbg!(assembly);
 }

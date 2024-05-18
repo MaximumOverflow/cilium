@@ -42,24 +42,24 @@ pub struct MetadataRoot {
 impl MetadataRoot {
     pub fn read(data: &ArcRef<[u8]>) -> std::io::Result<Self> {
         let mut stream = Cursor::new(data.as_ref());
-        if u32::read(&mut stream)? != 0x424A5342 {
+        if u32::read(&mut stream, &())? != 0x424A5342 {
             return Err(ErrorKind::InvalidData.into());
         }
 
-        let major_version = u16::read(&mut stream)?;
-        let minor_version = u16::read(&mut stream)?;
+        let major_version = u16::read(&mut stream, &())?;
+        let minor_version = u16::read(&mut stream, &())?;
         stream.seek(SeekFrom::Current(4))?; // Reserved
 
-        let length = ((u32::read(&mut stream)? + 3) / 4) * 4; // Round length to 4
+        let length = ((u32::read(&mut stream, &())? + 3) / 4) * 4; // Round length to 4
         let mut bytes = vec![0; length as usize];
         stream.read_exact(&mut bytes)?;
         let Ok(version) = std::str::from_utf8(&bytes).map(Arc::<str>::from) else {
             return Err(ErrorKind::InvalidData.into());
         };
 
-        let flags = u16::read(&mut stream)?;
+        let flags = u16::read(&mut stream, &())?;
 
-        let stream_header_count = u16::read(&mut stream)? as usize;
+        let stream_header_count = u16::read(&mut stream, &())? as usize;
         let mut heaps = HashMap::with_capacity(stream_header_count);
         for _ in 0..stream_header_count {
             let heap = <dyn MetadataHeap>::read(&mut stream, data)?;
@@ -117,7 +117,7 @@ impl TryFrom<PEFile> for Assembly {
             return Err(ErrorKind::InvalidData.into());
         };
         let mut cursor = Cursor::new(data.as_ref());
-        let cli_header = CLIHeader::read(&mut cursor)?;
+        let cli_header = CLIHeader::read(&mut cursor, &())?;
 
         let Some((_, data, _)) = pe.resolve_rva(cli_header.metadata.virtual_address) else {
             return Err(ErrorKind::InvalidData.into());

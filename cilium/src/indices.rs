@@ -1,4 +1,7 @@
+use std::alloc::Layout;
 use std::fmt::Debug;
+use crate::heaps::table::Table;
+use crate::indices::coded_index::CodedIndexKind;
 
 use crate::utilities::FromByteStream;
 
@@ -114,15 +117,17 @@ pub mod metadata_token {
 	}
 
 	impl FromByteStream for RawMetadataToken {
-		fn read(stream: &mut Cursor<&[u8]>) -> std::io::Result<Self> {
-			let value = u32::read(stream)?;
+		type Deps = ();
+		fn read(stream: &mut Cursor<&[u8]>, _: &Self::Deps) -> std::io::Result<Self> {
+			let value = u32::read(stream, &())?;
 			RawMetadataToken::try_from(value).map_err(|_| ErrorKind::InvalidData.into())
 		}
 	}
 
 	impl FromByteStream for MetadataToken {
-		fn read(stream: &mut Cursor<&[u8]>) -> std::io::Result<Self> {
-			let value = u32::read(stream)?;
+		type Deps = ();
+		fn read(stream: &mut Cursor<&[u8]>, _: &Self::Deps) -> std::io::Result<Self> {
+			let value = u32::read(stream, &())?;
 			MetadataToken::try_from(value).map_err(|_| ErrorKind::InvalidData.into())
 		}
 	}
@@ -174,8 +179,11 @@ pub mod metadata_token {
 }
 
 pub mod coded_index {
+	use std::io::{Read, Cursor, ErrorKind};
 	use crate::heaps::table::TableKind;
 	use crate::indices::metadata_token::{MetadataTokenKind, RawMetadataToken};
+	use crate::indices::sizes::CodedIndexSizes;
+	use crate::utilities::FromByteStream;
 
 	macro_rules! define_coded_index {
 		($($id: ident: [$($variant: ident),*]),*) => {
@@ -199,6 +207,17 @@ pub mod coded_index {
 							false => Err(()),
 							true => Ok(Self(value)),
 						}
+					}
+				}
+
+				impl FromByteStream for $id {
+					type Deps = CodedIndexSizes;
+					fn read(stream: &mut Cursor<&[u8]>, sizes: &Self::Deps) -> std::io::Result<Self> {
+						let size = sizes.0[CodedIndexKind::$id as usize];
+						let mut value = 0u32.to_ne_bytes();
+						stream.read_exact(&mut value[..size])?;
+						let value = u32::from_le_bytes(value);
+						Self::try_from(value).map_err(|_| ErrorKind::InvalidData.into())
 					}
 				}
 
@@ -286,3 +305,87 @@ pub mod coded_index {
 	}
 }
 
+pub(crate) mod sizes {
+	use std::alloc::Layout;
+	use crate::indices::coded_index::CodedIndexKind;
+
+	pub struct IndexSizes {
+		guid: GuidIndexSize,
+		blob: BlobIndexSize,
+		string: StringIndexSize,
+		coded: CodedIndexSizes,
+		tables: TableIndexSizes,
+	}
+
+	pub struct GuidIndexSize(pub(crate) usize);
+	pub struct BlobIndexSize(pub(crate) usize);
+	pub struct StringIndexSize(pub(crate) usize);
+	pub struct CodedIndexSizes(pub(crate) [usize; 14]);
+	pub struct TableIndexSizes(pub(crate) [usize; 64]);
+
+	impl IndexSizes {
+		pub fn new(heap_sizes: u8, table_lens: &[u32; 64]) -> Box<Self> {
+			unsafe {
+				let ptr = std::alloc::alloc(Layout::new::<Self>()) as *mut Self;
+				let mut val = Box::from_raw(ptr);
+
+				val.blob = BlobIndexSize(2 + 2 * ((heap_sizes & 0x4) != 0) as usize);
+				val.guid = GuidIndexSize(2 + 2 * ((heap_sizes & 0x2) != 0) as usize);
+				val.string = StringIndexSize(2 + 2 * ((heap_sizes & 0x1) != 0) as usize);
+
+				for i in 0..64 {
+					val.tables.0[i] = 2 + 2 * (table_lens[i] > 65536) as usize;
+				}
+
+				for i in 0..14 {
+					let kind: CodedIndexKind = std::mem::transmute(i as u32);
+					val.coded.0[i] = kind.get_size(table_lens);
+				}
+
+				val
+			}
+		}
+	}
+	impl AsRef<()> for IndexSizes {
+		#[inline(always)]
+		fn as_ref(&self) -> &() {
+			&()
+		}
+	}
+	impl AsRef<IndexSizes> for IndexSizes {
+		#[inline(always)]
+		fn as_ref(&self) -> &IndexSizes {
+			self
+		}
+	}
+	impl AsRef<GuidIndexSize> for IndexSizes {
+		#[inline(always)]
+		fn as_ref(&self) -> &GuidIndexSize {
+			&self.guid
+		}
+	}
+	impl AsRef<BlobIndexSize> for IndexSizes {
+		#[inline(always)]
+		fn as_ref(&self) -> &BlobIndexSize {
+			&self.blob
+		}
+	}
+	impl AsRef<StringIndexSize> for IndexSizes {
+		#[inline(always)]
+		fn as_ref(&self) -> &StringIndexSize {
+			&self.string
+		}
+	}
+	impl AsRef<CodedIndexSizes> for IndexSizes {
+		#[inline(always)]
+		fn as_ref(&self) -> &CodedIndexSizes {
+			&self.coded
+		}
+	}
+	impl AsRef<TableIndexSizes> for IndexSizes {
+		#[inline(always)]
+		fn as_ref(&self) -> &TableIndexSizes {
+			&self.tables
+		}
+	}
+}

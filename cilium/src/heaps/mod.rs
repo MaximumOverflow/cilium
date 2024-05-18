@@ -5,6 +5,7 @@ use std::sync::Arc;
 use owning_ref::ArcRef;
 
 use crate::heaps::table::TableHeap;
+use crate::indices::sizes::{BlobIndexSize, GuidIndexSize, StringIndexSize};
 use crate::utilities::{FromByteStream, read_string_from_stream_into};
 
 pub mod table;
@@ -30,8 +31,8 @@ impl dyn MetadataHeap {
 			return Err(ErrorKind::InvalidInput.into());
 		}
 
-		let offset = u32::read(stream)? as usize;
-		let size = u32::read(stream)? as usize;
+		let offset = u32::read(stream, &())? as usize;
+		let size = u32::read(stream, &())? as usize;
 
 		let mut name = [0u8; 32];
 		let name = read_string_from_stream_into::<4>(stream, name.as_mut_slice())?;
@@ -47,20 +48,38 @@ impl dyn MetadataHeap {
 }
 
 
-macro_rules! declare_heap_index {
-    ($($ident: ident),*) => {$(
-		#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-		pub struct $ident(usize);
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct StringIndex(usize);
 
-		impl $ident {
-			pub fn read(stream: &mut Cursor<&[u8]>, size: usize) -> std::io::Result<Self> {
-				let mut value = 0usize.to_ne_bytes();
-				stream.read_exact(&mut value[..size])?;
-				Ok(Self(usize::from_le_bytes(value)))
-			}
-		}
-	)*};
+impl FromByteStream for StringIndex {
+	type Deps = StringIndexSize;
+	fn read(stream: &mut Cursor<&[u8]>, size: &Self::Deps) -> std::io::Result<Self> {
+		let mut value = 0usize.to_ne_bytes();
+		stream.read_exact(&mut value[..size.0])?;
+		Ok(Self(usize::from_le_bytes(value)))
+	}
 }
 
-declare_heap_index!(StringIndex, BlobIndex, GuidIndex);
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct BlobIndex(usize);
 
+impl FromByteStream for BlobIndex {
+	type Deps = BlobIndexSize;
+	fn read(stream: &mut Cursor<&[u8]>, size: &Self::Deps) -> std::io::Result<Self> {
+		let mut value = 0usize.to_ne_bytes();
+		stream.read_exact(&mut value[..size.0])?;
+		Ok(Self(usize::from_le_bytes(value)))
+	}
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct GuidIndex(usize);
+
+impl FromByteStream for GuidIndex {
+	type Deps = GuidIndexSize;
+	fn read(stream: &mut Cursor<&[u8]>, size: &Self::Deps) -> std::io::Result<Self> {
+		let mut value = 0usize.to_ne_bytes();
+		stream.read_exact(&mut value[..size.0])?;
+		Ok(Self(usize::from_le_bytes(value)))
+	}
+}

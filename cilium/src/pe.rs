@@ -1,9 +1,10 @@
 use std::borrow::Borrow;
 use std::fmt::{Debug, Formatter};
-use std::io::{Cursor, Error, ErrorKind, Read, Seek, SeekFrom};
+use std::io::{Cursor, Error, ErrorKind};
 use std::mem::size_of;
 use std::ops::Range;
 use std::sync::Arc;
+
 use owning_ref::ArcRef;
 
 use crate::utilities::{FromByteStream, impl_from_byte_stream, read_bytes_slice_from_stream};
@@ -27,10 +28,11 @@ impl PEFile {
 }
 
 impl FromByteStream for PEFile {
-	fn read(stream: &mut Cursor<&[u8]>) -> std::io::Result<Self> {
-		let dos_header = DOSHeader::read(stream)?;
+	type Deps = ();
+	fn read(stream: &mut Cursor<&[u8]>, _: &Self::Deps) -> std::io::Result<Self> {
+		let dos_header = DOSHeader::read(stream, &())?;
 		stream.set_position(dos_header.new_header_start as u64);
-		let pe_header = PEHeader::read(stream)?;
+		let pe_header = PEHeader::read(stream, &())?;
 
 		stream.set_position(
 			dos_header.new_header_start as u64
@@ -40,7 +42,7 @@ impl FromByteStream for PEFile {
 
 		let mut sections = Vec::with_capacity(pe_header.image_file_header.number_of_sections as usize);
 		for _ in 0..pe_header.image_file_header.number_of_sections as usize {
-			let header = SectionHeader::read(stream)?;
+			let header = SectionHeader::read(stream, &())?;
 			let position = stream.position();
 			stream.set_position(header.pointer_to_raw_data as u64);
 			let data = read_bytes_slice_from_stream(stream, header.size_of_raw_data as usize)?;
@@ -90,12 +92,13 @@ pub struct PEHeader {
 }
 
 impl FromByteStream for PEHeader {
-	fn read(stream: &mut Cursor<&[u8]>) -> std::io::Result<Self> {
-		if u32::read(stream)? != 0x4550 {
+	type Deps = ();
+	fn read(stream: &mut Cursor<&[u8]>, _: &Self::Deps) -> std::io::Result<Self> {
+		if u32::read(stream, &())? != 0x4550 {
 			return Err(Error::from(ErrorKind::InvalidData));
 		}
-		let image_file_header = ImageFileHeader::read(stream)?;
-		let image_optional_header = ImageOptionalHeader::read(stream)?;
+		let image_file_header = ImageFileHeader::read(stream, &())?;
+		let image_optional_header = ImageOptionalHeader::read(stream, &())?;
 		Ok(Self {
 			magic: 0x4550,
 			image_file_header,
@@ -202,16 +205,17 @@ pub enum ImageOptionalHeader {
 }
 
 impl FromByteStream for ImageOptionalHeader {
-	fn read(stream: &mut Cursor<&[u8]>) -> std::io::Result<Self> {
+	type Deps = ();
+	fn read(stream: &mut Cursor<&[u8]>, _: &Self::Deps) -> std::io::Result<Self> {
 		let start = stream.position();
-		match u16::read(stream)? {
+		match u16::read(stream, &())? {
 			0x010B => {
 				stream.set_position(start);
-				Ok(Self::PE32(ImageOptionalHeader32::read(stream)?))
+				Ok(Self::PE32(ImageOptionalHeader32::read(stream, &())?))
 			}
 			0x020B => {
 				stream.set_position(start);
-				Ok(Self::PE64(ImageOptionalHeader64::read(stream)?))
+				Ok(Self::PE64(ImageOptionalHeader64::read(stream, &())?))
 			}
 			_ => Err(Error::from(ErrorKind::InvalidData)),
 		}

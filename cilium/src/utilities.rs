@@ -46,14 +46,16 @@ pub(crate) fn read_string_from_data<const ROUND: usize>(data: ArcRef<[u8]>) -> s
 }
 
 pub trait FromByteStream where Self: Sized {
-	fn read(stream: &mut Cursor<&[u8]>) -> std::io::Result<Self>;
+	type Deps;
+	fn read(stream: &mut Cursor<&[u8]>, deps: &Self::Deps) -> std::io::Result<Self>;
 }
 
 macro_rules! impl_from_byte_stream {
 	($ty: ty) => {
 		impl crate::utilities::FromByteStream for $ty {
+			type Deps = ();
 			#[inline]
-			fn read(stream: &mut std::io::Cursor<&[u8]>) -> std::io::Result<Self> {
+			fn read(stream: &mut std::io::Cursor<&[u8]>, _: &Self::Deps) -> std::io::Result<Self> {
 				unsafe { crate::utilities::read_pod_from_stream(stream) }
 			}
 		}
@@ -61,8 +63,9 @@ macro_rules! impl_from_byte_stream {
 
 	($ty: ty, $magic: literal) => {
 		impl crate::utilities::FromByteStream for $ty {
+			type Deps = ();
 			#[inline]
-			fn read(stream: &mut std::io::Cursor<&[u8]>) -> std::io::Result<Self> {
+			fn read(stream: &mut std::io::Cursor<&[u8]>, _: &Self::Deps) -> std::io::Result<Self> {
 				let value = unsafe { crate::utilities::read_pod_from_stream::<$ty>(stream)? };
 				match value.magic == $magic {
 					true => Ok(value),
@@ -78,9 +81,10 @@ pub(crate) use impl_from_byte_stream;
 macro_rules! impl_from_le_byte_stream {
     ($($ty: ty),*) => {$(
 		impl crate::utilities::FromByteStream for $ty {
+			type Deps = ();
 			#[inline]
-			fn read(stream: &mut std::io::Cursor<&[u8]>) -> std::io::Result<Self> {
-				let mut bytes = <[u8; size_of::<Self>()]>::read(stream)?;
+			fn read(stream: &mut std::io::Cursor<&[u8]>, _: &Self::Deps) -> std::io::Result<Self> {
+				let mut bytes = <[u8; size_of::<Self>()]>::read(stream, &())?;
 				Ok(Self::from_le_bytes(bytes))
 			}
 		}
@@ -88,8 +92,9 @@ macro_rules! impl_from_le_byte_stream {
 }
 
 impl FromByteStream for u8 {
+	type Deps = ();
 	#[inline]
-	fn read(stream: &mut Cursor<&[u8]>) -> std::io::Result<Self> {
+	fn read(stream: &mut Cursor<&[u8]>, _: &Self::Deps) -> std::io::Result<Self> {
 		let mut byte = 0u8;
 		stream.read_exact(std::slice::from_mut(&mut byte))?;
 		Ok(byte)
@@ -99,8 +104,9 @@ impl FromByteStream for u8 {
 impl_from_le_byte_stream!(u16, u32, u64);
 
 impl<const SIZE: usize> FromByteStream for [u8; SIZE] {
+	type Deps = ();
 	#[inline]
-	fn read(stream: &mut Cursor<&[u8]>) -> std::io::Result<Self> {
+	fn read(stream: &mut Cursor<&[u8]>, _: &Self::Deps) -> std::io::Result<Self> {
 		let mut bytes = [0u8; SIZE];
 		stream.read_exact(&mut bytes)?;
 		Ok(bytes)
