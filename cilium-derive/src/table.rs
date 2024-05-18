@@ -67,6 +67,10 @@ pub fn derive(tokens: proc_macro::TokenStream) -> TokenStream {
 				self.rows.len()
 			}
 
+            fn kind(&self) -> TableKind {
+				TableKind::#ident
+			}
+
 			fn row_size(&self) -> usize {
 				self.row_size
 			}

@@ -94,3 +94,24 @@ impl Debug for MetadataToken {
 		dbg.finish()
 	}
 }
+
+#[repr(u32)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum CodedIndexKind {
+	TypeDefOrRef,
+	HasConstant,
+	HasCustomAttribute,
+	HasFieldMarshal,
+	HasDeclSecurity,
+	MemberRefParent,
+	HasSemantics,
+	MethodDefOrRef,
+	MemberForwarded,
+	Implementation,
+	CustomAttributeType,
+	ResolutionScope,
+	TypeOrMethodDef,
+	HasCustomDebugInformation,
+}
+
+
