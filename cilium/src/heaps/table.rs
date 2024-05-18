@@ -228,3 +228,12 @@ bitflags! {
 		const IsTypeForwarder = 0x00200000;
 	}
 }
+
+impl_from_byte_stream!(TypeAttributes);
+
+#[derive(Debug, Table)]
+pub struct TypeDef {
+	flags: TypeAttributes,
+	type_name: StringIndex,
+	type_namespace: StringIndex,
+}

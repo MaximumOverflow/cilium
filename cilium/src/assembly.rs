@@ -1,13 +1,15 @@
-use crate::utilities::{FromByteStream, impl_from_byte_stream};
-use crate::pe::{DataDirectory, ImageOptionalHeader, PEFile};
-use std::io::{Cursor, ErrorKind, Read, Seek, SeekFrom};
-use crate::heaps::{MetadataHeap, MetadataHeapKind};
-use crate::metadata_token::MetadataToken;
 use std::collections::HashMap;
-use bitflags::bitflags;
+use std::io::{Cursor, ErrorKind, Read, Seek, SeekFrom};
 use std::mem::size_of;
 use std::sync::Arc;
+
+use bitflags::bitflags;
 use owning_ref::ArcRef;
+
+use crate::heaps::{MetadataHeap, MetadataHeapKind};
+use crate::indices::metadata_token::{MetadataToken, RawMetadataToken};
+use crate::pe::{DataDirectory, ImageOptionalHeader, PEFile};
+use crate::utilities::{FromByteStream, impl_from_byte_stream};
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]

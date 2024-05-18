@@ -7,7 +7,7 @@ use owning_ref::ArcRef;
 use crate::heaps::table::TableHeap;
 use crate::utilities::{FromByteStream, read_string_from_stream_into};
 
-mod table;
+pub mod table;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum MetadataHeapKind {

@@ -6,7 +6,7 @@ use crate::utilities::FromByteStream;
 mod pe;
 mod assembly;
 mod utilities;
-mod metadata_token;
+mod indices;
 mod heaps;
 
 fn main() {
