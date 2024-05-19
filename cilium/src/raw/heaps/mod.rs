@@ -26,6 +26,7 @@ pub enum MetadataHeap {
 }
 
 impl MetadataHeap {
+	#[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
 	pub fn read(stream: &mut Cursor<&[u8]>, data: &ArcRef<[u8]>) -> std::io::Result<Arc<Self>> {
 		if stream.get_ref().as_ptr() != data.as_ptr() {
 			return Err(ErrorKind::InvalidInput.into());

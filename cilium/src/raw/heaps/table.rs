@@ -44,6 +44,7 @@ impl TableHeap {
 
 impl TryFrom<ArcRef<[u8]>> for TableHeap {
 	type Error = Error;
+	#[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
 	fn try_from(value: ArcRef<[u8]>) -> Result<Self, Self::Error> {
 		#[repr(C)]
 		#[derive(Copy, Clone)]

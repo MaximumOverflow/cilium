@@ -30,6 +30,7 @@ impl PEFile {
 
 impl FromByteStream for PEFile {
 	type Deps = ();
+	#[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
 	fn read(stream: &mut Cursor<&[u8]>, _: &Self::Deps) -> std::io::Result<Self> {
 		let dos_header = DOSHeader::read(stream, &())?;
 		stream.set_position(dos_header.new_header_start as u64);
@@ -41,19 +42,28 @@ impl FromByteStream for PEFile {
 				+ 4 + pe_header.image_file_header.size_of_optional_header as u64,
 		);
 
-		let mut sections =
-			Vec::with_capacity(pe_header.image_file_header.number_of_sections as usize);
-		for _ in 0..pe_header.image_file_header.number_of_sections as usize {
-			let header = SectionHeader::read(stream, &())?;
-			let position = stream.position();
-			stream.set_position(header.pointer_to_raw_data as u64);
-			let data = read_bytes_slice_from_stream(stream, header.size_of_raw_data as usize)?;
-			sections.push(Section {
-				header,
-				data: ArcRef::new(Arc::from(data)),
-			});
-			stream.set_position(position);
-		}
+		#[allow(unused_mut)]
+		let mut create_sections = || -> Result<Vec<Section>, Error> {
+			let mut sections = Vec::with_capacity(pe_header.image_file_header.number_of_sections as usize);
+			for _ in 0..pe_header.image_file_header.number_of_sections as usize {
+				let header = SectionHeader::read(stream, &())?;
+				let position = stream.position();
+				stream.set_position(header.pointer_to_raw_data as u64);
+				let data = read_bytes_slice_from_stream(stream, header.size_of_raw_data as usize)?;
+				sections.push(Section {
+					header,
+					data: ArcRef::new(Arc::from(data)),
+				});
+				stream.set_position(position);
+			}
+			Ok(sections)
+		};
+
+		#[cfg(not(feature = "tracing"))]
+		let sections = create_sections()?;
+
+		#[cfg(feature = "tracing")]
+		let sections = tracing::trace_span!("create_sections").in_scope(create_sections)?;
 
 		Ok(Self {
 			dos_header,
@@ -99,6 +109,7 @@ pub struct PEHeader {
 
 impl FromByteStream for PEHeader {
 	type Deps = ();
+	#[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
 	fn read(stream: &mut Cursor<&[u8]>, _: &Self::Deps) -> std::io::Result<Self> {
 		if u32::read(stream, &())? != 0x4550 {
 			return Err(Error::from(ErrorKind::InvalidData));
@@ -215,6 +226,7 @@ pub enum ImageOptionalHeader {
 
 impl FromByteStream for ImageOptionalHeader {
 	type Deps = ();
+	#[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
 	fn read(stream: &mut Cursor<&[u8]>, _: &Self::Deps) -> std::io::Result<Self> {
 		let start = stream.position();
 		match u16::read(stream, &())? {

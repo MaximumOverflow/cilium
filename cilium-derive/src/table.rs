@@ -19,6 +19,7 @@ pub fn derive(tokens: proc_macro::TokenStream) -> TokenStream {
 
 	let table = format_ident!("{}Table", ident);
 	let index = format_ident!("{}Index", ident);
+	let trace = format!("{}Table::read", ident);
 
 	let mut print = None;
 	let read_with = attrs.iter().find_map(|a| {
@@ -63,7 +64,8 @@ pub fn derive(tokens: proc_macro::TokenStream) -> TokenStream {
 		}
 
 		impl #table {
-			pub fn read(stream: &mut Cursor<&[u8]>, idx_sizes: &IndexSizes, len: usize) -> std::io::Result<Self> {
+			#[cfg_attr(feature = "tracing", tracing::instrument(skip_all, name = #trace))]
+			fn read(stream: &mut Cursor<&[u8]>, idx_sizes: &IndexSizes, len: usize) -> std::io::Result<Self> {
 				#read_impl
 			}
 		}

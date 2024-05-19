@@ -39,6 +39,7 @@ pub struct MetadataRoot {
 }
 
 impl MetadataRoot {
+	#[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
 	pub fn read(data: &ArcRef<[u8]>) -> std::io::Result<Self> {
 		let mut stream = Cursor::new(data.as_ref());
 		if u32::read(&mut stream, &())? != 0x424A5342 {
@@ -115,6 +116,7 @@ bitflags! {
 
 impl TryFrom<PEFile> for Assembly {
 	type Error = Error;
+	#[cfg_attr(feature = "tracing", tracing::instrument(skip_all, name = "<Assembly as TryFrom<PEFile>>::try_from"))]
 	fn try_from(pe: PEFile) -> Result<Self, Self::Error> {
 		let rva = match &pe.pe_header.image_optional_header {
 			ImageOptionalHeader::None => {
