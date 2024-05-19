@@ -26,23 +26,13 @@ pub(crate) fn read_bytes_slice_from_stream(stream: &mut Cursor<impl AsRef<[u8]>>
 
 #[inline(never)]
 pub(crate) fn read_string_from_stream_into<'a, const ROUND: usize>(stream: &mut Cursor<impl AsRef<[u8]>>, buffer: &'a mut [u8]) -> std::io::Result<&'a str> {
+	let position = stream.position();
 	let max_len = stream.read(buffer)?;
 	let str_end = buffer.iter().position(|v| *v == b'\0').unwrap_or(max_len);
 	let str = std::str::from_utf8(&buffer[..str_end]).map_err(|_| Error::from(ErrorKind::InvalidData))?;
-	let advance = round_to_multiple_of::<ROUND>(str_end + 1) as i64;
-	stream.seek(SeekFrom::Current(advance))?;
+	let advance = round_to_multiple_of::<ROUND>(str_end + 1) as u64;
+	stream.seek(SeekFrom::Start(position + advance))?;
 	Ok(str)
-}
-
-#[inline(never)]
-pub(crate) fn read_string_from_data<const ROUND: usize>(data: ArcRef<[u8]>) -> std::io::Result<(OwningRef<Arc<[u8]>, str>, i64)> {
-	let str_end = data.iter().position(|v| *v == b'\0').unwrap_or(data.len());
-	_ = std::str::from_utf8(&data[..str_end]).map_err(|_| Error::from(ErrorKind::InvalidData))?;
-	let advance = round_to_multiple_of::<ROUND>(str_end + 1) as i64;
-	let str = data.map(|data| unsafe {
-		std::str::from_utf8_unchecked(&data[..str_end])
-	});
-	Ok((str, advance))
 }
 
 pub trait FromByteStream where Self: Sized {

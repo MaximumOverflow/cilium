@@ -1,8 +1,10 @@
 use std::fmt::Debug;
 use std::io::{Cursor, Error, ErrorKind, Read};
 use std::sync::Arc;
+
 use bitflags::bitflags;
 use owning_ref::ArcRef;
+
 use cilium_derive::{FromRepr, Table};
 
 use crate::heaps::{BlobIndex, GuidIndex, MetadataHeap, MetadataHeapKind, StringIndex};
@@ -305,6 +307,33 @@ pub struct TypeDef {
 	method_list: MethodDefIndex,
 }
 
+fn read_type_defspub(stream: &mut Cursor<&[u8]>, idx_sizes: &IndexSizes, len: usize) -> std::io::Result<TypeDefTable> {
+	let mut rows = Vec::with_capacity(len);
+	rows.push(
+		TypeDef {
+			flags: <TypeAttributes>::read(stream, idx_sizes.as_ref())?,
+			type_name: <StringIndex>::read(stream, idx_sizes.as_ref())?,
+			type_namespace: <StringIndex>::read(stream, idx_sizes.as_ref())?,
+			extends: <TypeDefOrRef>::read(stream, idx_sizes.as_ref())?,
+			field_list: FieldIndex(0),
+			method_list: MethodDefIndex(0),
+		}
+	);
+	for i in 1..len {
+		let row = TypeDef {
+			flags: <TypeAttributes>::read(stream, idx_sizes.as_ref())?,
+			type_name: <StringIndex>::read(stream, idx_sizes.as_ref())?,
+			type_namespace: <StringIndex>::read(stream, idx_sizes.as_ref())?,
+			extends: <TypeDefOrRef>::read(stream, idx_sizes.as_ref())?,
+			field_list: <FieldIndex>::read(stream, idx_sizes.as_ref())?,
+			method_list: <MethodDefIndex>::read(stream, idx_sizes.as_ref())?,
+		};
+		println!("{:X?}", row);
+		rows.push(row)
+	}
+	Ok(TypeDefTable { rows })
+}
+
 bitflags! {
 	#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 	pub struct FieldAttributes: u16 {
@@ -494,7 +523,7 @@ impl_from_byte_stream!(PropertyAttributes);
 pub struct Property {
 	flags: PropertyAttributes,
 	name: StringIndex,
-	ty: TypeDefOrRef,
+	ty: BlobIndex,
 }
 
 bitflags! {
@@ -569,7 +598,14 @@ impl_from_byte_stream!(AssemblyHashAlgorithm);
 bitflags! {
 	#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 	pub struct AssemblyFlags: u32 {
-		//TODO
+		/// The assembly reference holds the full (unhashed) public key.
+		const PUBLIC_KEY = 0x0001;
+		/// The implementation of this assembly used at runtime is not expected to match the version seen at compile time.
+		const RETARGETABLE = 0x0100;
+		/// Reserved (a conforming implementation of the CLI can ignore this setting on read; some implementations might use this bit to indicate that a CIL-to-native-code compiler should not generate optimized code).
+		const DISABLE_JIT_COMPILE_OPTIMIZER = 0x4000;
+		/// Reserved (a conforming implementation of the CLI can ignore this setting on read; some implementations might use this bit to indicate that a CIL-to-native-codecompiler should generate CIL-to-native code map).
+		const ENABLE_JIT_COMPILE_TRACKING = 0x8000;
 	}
 }
 
@@ -580,10 +616,12 @@ pub struct Assembly {
 	hash_algorithm: AssemblyHashAlgorithm,
 	major_version: u16,
 	minor_version: u16,
+	build_number: u16,
 	revision_number: u16,
 	flags: AssemblyFlags,
 	public_key: BlobIndex,
 	name: StringIndex,
+	culture: StringIndex,
 }
 
 bitflags! {

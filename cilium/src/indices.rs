@@ -202,9 +202,10 @@ pub mod coded_index {
 				impl Debug for $id {
 					fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
 						let token: MetadataToken = (*self).into();
-						write!(f, "{}(", stringify!($id), )?;
-						token.fmt(f)?;
-						write!(f, ")")
+						write!(f, "{}(", stringify!($id))?;
+						self.0.fmt(f)?;
+						write!(f, ") | ")?;
+						token.fmt(f)
 					}
 				}
 
@@ -234,7 +235,7 @@ pub mod coded_index {
 						const MASK: u32 = CodedIndexKind::$id.mask();
 						const BITS: u32 = CodedIndexKind::$id.mask_bits();
 						let tokens = TOKENS[CodedIndexKind::$id as usize];
-						let token = tokens[(value.0 & MASK) as usize];
+						let token = CodedIndexKind::$id.token_kind(value.0);
 						let val = ((token as u32) << 24) | value.0 >> BITS;
 						RawMetadataToken::try_from(val).unwrap()
 					}
@@ -315,7 +316,10 @@ pub mod coded_index {
 				CodedIndexKind::CustomAttributeType => 0x7,
 				_ => {
 					let tokens = TABLES[*self as usize];
-					u32::MAX.overflowing_shr((tokens.len() as u32).leading_zeros()).0
+					match tokens.len() {
+						0 | 1 => 0,
+						_ => u32::MAX.overflowing_shr((tokens.len() as u32 - 1).leading_zeros()).0
+					}
 				}
 			}
 		}
@@ -325,7 +329,7 @@ pub mod coded_index {
 				CodedIndexKind::CustomAttributeType => 0x3,
 				_ => {
 					let tokens = TABLES[*self as usize];
-					32 - (tokens.len() as u32).leading_zeros()
+					32 - (tokens.len() as u32 - 1).leading_zeros()
 				}
 			}
 		}
@@ -338,9 +342,22 @@ pub mod coded_index {
 					_ => false,
 				},
 				_ => {
-					let tables = TABLES[CodedIndexKind::HasCustomAttribute as usize];
+					let tables = TABLES[*self as usize];
 					((value & self.mask()) as usize) < tables.len()
 				}
+			}
+		}
+
+		pub const fn token_kind(&self, value: u32) -> MetadataTokenKind {
+			let mask = self.mask();
+			let discriminant = value & mask;
+			match self {
+				CodedIndexKind::CustomAttributeType => match discriminant {
+					2 => MetadataTokenKind::MethodDef,
+					3 => MetadataTokenKind::MemberRef,
+					_ => unreachable!(),
+				},
+				_ => TOKENS[*self as usize][discriminant as usize]
 			}
 		}
 	}

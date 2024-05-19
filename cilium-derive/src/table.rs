@@ -20,8 +20,15 @@ pub fn derive(tokens: proc_macro::TokenStream) -> TokenStream {
     let table = format_ident!("{}Table", ident);
     let index = format_ident!("{}Index", ident);
 
+    let mut print = None;
     let read_with = attrs.iter().find_map(|a| {
         let ident = a.path().get_ident()?;
+        if ident == "print_rows" {
+            print = Some(quote! {
+                #[cfg(debug_assertions)]
+                println!("{:X?}", row);
+            });
+        }
         if ident != "read_with" {
             return None;
         }
@@ -41,6 +48,7 @@ pub fn derive(tokens: proc_macro::TokenStream) -> TokenStream {
                 let mut rows = Vec::with_capacity(len);
                 for i in 0..len {
                     let row = #ident { #(#reads),* };
+                    #print
                     rows.push(row)
                 }
                 Ok(Self { rows })

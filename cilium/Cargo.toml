@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+uuid = "1.8.0"
 bitflags = "2.5.0"
 owning_ref = "0.4.1"
 cilium-derive = { path = "../cilium-derive" }

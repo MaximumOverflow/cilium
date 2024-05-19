@@ -1,14 +1,20 @@
 use std::io::{Cursor, ErrorKind, Read, Seek};
-use std::fmt::Debug;
+use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 
 use owning_ref::ArcRef;
+use crate::heaps::blob::BlobHeap;
+use crate::heaps::guid::GuidHeap;
+use crate::heaps::string::{StringHeap, UserStringHeap};
 
 use crate::heaps::table::TableHeap;
 use crate::indices::sizes::{BlobIndexSize, GuidIndexSize, StringIndexSize};
 use crate::utilities::{FromByteStream, read_string_from_stream_into};
 
 pub mod table;
+mod guid;
+mod string;
+mod blob;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum MetadataHeapKind {
@@ -41,7 +47,11 @@ impl dyn MetadataHeap {
 		let data = data.clone().map(|s| &s[range]);
 
 		match name {
+			"#Blob" => Ok(Arc::new(BlobHeap::from(data))),
+			"#US" => Ok(Arc::new(UserStringHeap::from(data))),
 			"#~" => Ok(Arc::new(TableHeap::try_from(data)?)),
+			"#GUID" => Ok(Arc::new(GuidHeap::try_from(data)?)),
+			"#Strings" => Ok(Arc::new(StringHeap::try_from(data)?)),
 			_ => unimplemented!("Unimplemented MetadataHeap kind {:?}", name),
 		}
 	}
@@ -81,5 +91,15 @@ impl FromByteStream for GuidIndex {
 		let mut value = 0usize.to_ne_bytes();
 		stream.read_exact(&mut value[..size.0])?;
 		Ok(Self(usize::from_le_bytes(value)))
+	}
+}
+
+pub(super) struct SizeDebugWrapper(usize);
+impl Debug for SizeDebugWrapper {
+	#[inline]
+	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+		f.write_str("[u8; ")?;
+		Debug::fmt(&self.0, f)?;
+		f.write_str("]")
 	}
 }
