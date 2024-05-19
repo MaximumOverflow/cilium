@@ -9,7 +9,11 @@ use owning_ref::ArcRef;
 use cilium_derive::{FromRepr, Table};
 
 use crate::raw::heaps::{BlobIndex, GuidIndex, StringIndex};
-use crate::raw::indices::coded_index::{CustomAttributeType, HasConstant, HasCustomAttribute, HasFieldMarshal, HasSemantics, Implementation, MemberForwarded, MemberRefParent, MethodDefOrRef, TypeDefOrRef, TypeOrMethodDef};
+use crate::raw::indices::coded_index::{
+	CustomAttributeType, HasConstant, HasCustomAttribute, HasFieldMarshal, HasSemantics,
+	Implementation, MemberForwarded, MemberRefParent, MethodDefOrRef, TypeDefOrRef,
+	TypeOrMethodDef,
+};
 use crate::raw::indices::sizes::*;
 use crate::utilities::{enumerate_set_bits, FromByteStream, impl_from_byte_stream};
 
@@ -57,8 +61,10 @@ impl TryFrom<ArcRef<[u8]>> for TableHeap {
 
 		let mut stream = Cursor::new(value.as_ref());
 		let Header {
-			heap_sizes, valid,
-			minor_version, major_version,
+			heap_sizes,
+			valid,
+			minor_version,
+			major_version,
 			..
 		} = Header::read(&mut stream, &())?;
 
@@ -80,59 +86,60 @@ impl TryFrom<ArcRef<[u8]>> for TableHeap {
 				return Err(ErrorKind::InvalidData.into());
 			};
 
+			#[rustfmt::skip]
 			tables.push(match kind {
-				TableKind::Module => Arc::new(ModuleTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::TypeRef => todo!("Unimplemented table TypeRef"),
-				TableKind::TypeDef => Arc::new(TypeDefTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::FieldPtr => todo!("Unimplemented table FieldPtr"),
-				TableKind::Field => Arc::new(FieldTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::MethodPtr => todo!("Unimplemented table MethodPtr"),
-				TableKind::MethodDef => Arc::new(MethodDefTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::ParamPtr => todo!("Unimplemented table ParamPtr"),
-				TableKind::Param => Arc::new(ParamTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::InterfaceImpl => Arc::new(InterfaceImplTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::MemberRef => Arc::new(MemberRefTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::Constant => Arc::new(ConstantTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::CustomAttribute => Arc::new(CustomAttributeTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::FieldMarshal => Arc::new(FieldMarshalTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::DeclSecurity => todo!("Unimplemented table DeclSecurity"),
-				TableKind::ClassLayout => Arc::new(ClassLayoutTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::FieldLayout => Arc::new(FieldLayoutTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::StandAloneSig => Arc::new(StandAloneSigTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::EventMap => Arc::new(EventMapTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::EventPtr => todo!("Unimplemented table EventPtr"),
-				TableKind::Event => Arc::new(EventTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::PropertyMap => Arc::new(PropertyMapTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::PropertyPtr => todo!("Unimplemented table PropertyPtr"),
-				TableKind::Property => Arc::new(PropertyTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::MethodSemantics => Arc::new(MethodSemanticsTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::MethodImpl => Arc::new(MethodImplTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::ModuleRef => Arc::new(ModuleRefTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::TypeSpec => Arc::new(TypeSpecTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::ImplMap => Arc::new(ImplMapTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::FieldRVA => Arc::new(FieldRVATable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::EncLog => todo!("Unimplemented table EncLog"),
-				TableKind::EncMap => todo!("Unimplemented table EncMap"),
-				TableKind::Assembly => Arc::new(AssemblyTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::AssemblyProcessor => todo!("Unimplemented table AssemblyProcessor"),
-				TableKind::AssemblyOS => todo!("Unimplemented table AssemblyOS"),
-				TableKind::AssemblyRef => todo!("Unimplemented table AssemblyRef"),
-				TableKind::AssemblyRefProcessor => todo!("Unimplemented table AssemblyRefProcessor"),
-				TableKind::AssemblyRefOS => todo!("Unimplemented table AssemblyRefOS"),
-				TableKind::File => todo!("Unimplemented table File"),
-				TableKind::ExportedType => todo!("Unimplemented table ExportedType"),
-				TableKind::ManifestResource => Arc::new(ManifestResourceTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::NestedClass => Arc::new(NestedClassTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::GenericParam => Arc::new(GenericParamTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::MethodSpec => Arc::new(MethodSpecTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::Module => 				 Arc::new(ModuleTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::TypeRef => 				 todo!("Unimplemented table TypeRef"),
+				TableKind::TypeDef => 				 Arc::new(TypeDefTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::FieldPtr => 				 todo!("Unimplemented table FieldPtr"),
+				TableKind::Field => 				 Arc::new(FieldTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::MethodPtr => 			 todo!("Unimplemented table MethodPtr"),
+				TableKind::MethodDef => 			 Arc::new(MethodDefTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::ParamPtr => 				 todo!("Unimplemented table ParamPtr"),
+				TableKind::Param => 				 Arc::new(ParamTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::InterfaceImpl => 		 Arc::new(InterfaceImplTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::MemberRef => 			 Arc::new(MemberRefTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::Constant => 				 Arc::new(ConstantTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::CustomAttribute => 		 Arc::new(CustomAttributeTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::FieldMarshal => 			 Arc::new(FieldMarshalTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::DeclSecurity => 			 todo!("Unimplemented table DeclSecurity"),
+				TableKind::ClassLayout => 			 Arc::new(ClassLayoutTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::FieldLayout => 			 Arc::new(FieldLayoutTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::StandAloneSig => 		 Arc::new(StandAloneSigTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::EventMap => 				 Arc::new(EventMapTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::EventPtr => 				 todo!("Unimplemented table EventPtr"),
+				TableKind::Event => 				 Arc::new(EventTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::PropertyMap => 			 Arc::new(PropertyMapTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::PropertyPtr => 			 todo!("Unimplemented table PropertyPtr"),
+				TableKind::Property => 				 Arc::new(PropertyTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::MethodSemantics => 		 Arc::new(MethodSemanticsTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::MethodImpl => 			 Arc::new(MethodImplTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::ModuleRef => 			 Arc::new(ModuleRefTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::TypeSpec => 				 Arc::new(TypeSpecTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::ImplMap => 				 Arc::new(ImplMapTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::FieldRVA => 				 Arc::new(FieldRVATable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::EncLog => 				 todo!("Unimplemented table EncLog"),
+				TableKind::EncMap => 				 todo!("Unimplemented table EncMap"),
+				TableKind::Assembly => 				 Arc::new(AssemblyTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::AssemblyProcessor => 	 todo!("Unimplemented table AssemblyProcessor"),
+				TableKind::AssemblyOS => 			 todo!("Unimplemented table AssemblyOS"),
+				TableKind::AssemblyRef => 			 todo!("Unimplemented table AssemblyRef"),
+				TableKind::AssemblyRefProcessor => 	 todo!("Unimplemented table AssemblyRefProcessor"),
+				TableKind::AssemblyRefOS => 		 todo!("Unimplemented table AssemblyRefOS"),
+				TableKind::File => 					 todo!("Unimplemented table File"),
+				TableKind::ExportedType => 			 todo!("Unimplemented table ExportedType"),
+				TableKind::ManifestResource => 		 Arc::new(ManifestResourceTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::NestedClass => 			 Arc::new(NestedClassTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::GenericParam => 			 Arc::new(GenericParamTable::read(&mut stream, &idx_sizes, len)?),
+				TableKind::MethodSpec => 			 Arc::new(MethodSpecTable::read(&mut stream, &idx_sizes, len)?),
 				TableKind::GenericParamConstraint => Arc::new(GenericParamConstraintTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::Document => todo!("Unimplemented table Document"),
+				TableKind::Document => 				 todo!("Unimplemented table Document"),
 				TableKind::MethodDebugInformation => todo!("Unimplemented table MethodDebugInformation"),
-				TableKind::LocalScope => todo!("Unimplemented table LocalScope"),
-				TableKind::LocalVariable => todo!("Unimplemented table LocalVariable"),
-				TableKind::LocalConstant => todo!("Unimplemented table LocalConstant"),
-				TableKind::ImportScope => todo!("Unimplemented table ImportScope"),
-				TableKind::StateMachineMethod => todo!("Unimplemented table StateMachineMethod"),
+				TableKind::LocalScope => 			 todo!("Unimplemented table LocalScope"),
+				TableKind::LocalVariable => 		 todo!("Unimplemented table LocalVariable"),
+				TableKind::LocalConstant => 		 todo!("Unimplemented table LocalConstant"),
+				TableKind::ImportScope => 			 todo!("Unimplemented table ImportScope"),
+				TableKind::StateMachineMethod => 	 todo!("Unimplemented table StateMachineMethod"),
 				TableKind::CustomDebugInformation => todo!("Unimplemented table CustomDebugInformation"),
 			});
 		}
@@ -461,13 +468,13 @@ pub struct FieldLayout {
 
 #[derive(Debug, Clone, Table)]
 pub struct StandAloneSig {
-	pub signature: BlobIndex
+	pub signature: BlobIndex,
 }
 
 #[derive(Debug, Clone, Table)]
 pub struct EventMap {
 	pub parent: TypeDefIndex,
-	pub event_list: EventIndex
+	pub event_list: EventIndex,
 }
 
 bitflags! {
@@ -489,7 +496,7 @@ pub struct Event {
 #[derive(Debug, Clone, Table)]
 pub struct PropertyMap {
 	pub parent: TypeDefIndex,
-	pub property_list: PropertyIndex
+	pub property_list: PropertyIndex,
 }
 
 bitflags! {
@@ -567,12 +574,12 @@ pub struct FieldRVA {
 #[repr(u32)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, FromRepr)]
 pub enum AssemblyHashAlgorithm {
-	None		= 0x0000,
-	MD5			= 0x8003,
-	SHA1		= 0x8004,
-	SHA256		= 0x800C,
-	SHA384		= 0x800D,
-	SHA512		= 0x800E,
+	None = 0x0000,
+	MD5 = 0x8003,
+	SHA1 = 0x8004,
+	SHA256 = 0x800C,
+	SHA384 = 0x800D,
+	SHA512 = 0x800E,
 }
 
 impl_from_byte_stream!(AssemblyHashAlgorithm);

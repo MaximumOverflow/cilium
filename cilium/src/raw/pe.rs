@@ -18,11 +18,13 @@ pub struct PEFile {
 
 impl PEFile {
 	pub fn resolve_rva(&self, rva: u32) -> Option<(&Section, ArcRef<[u8]>, usize)> {
-		let section = self.sections
-			.iter()
-			.find(|s| s.virtual_data_range().contains(&rva))?;
+		let section = self.sections.iter().find(|s| s.virtual_data_range().contains(&rva))?;
 		let idx = rva - section.header.virtual_address;
-		Some((section, section.data.clone().map(|s| &s[idx as usize..]), idx as usize))
+		Some((
+			section,
+			section.data.clone().map(|s| &s[idx as usize..]),
+			idx as usize,
+		))
 	}
 }
 
@@ -35,11 +37,12 @@ impl FromByteStream for PEFile {
 
 		stream.set_position(
 			dos_header.new_header_start as u64
-				+ size_of::<ImageFileHeader>() as u64 + 4
-				+ pe_header.image_file_header.size_of_optional_header as u64
+				+ size_of::<ImageFileHeader>() as u64
+				+ 4 + pe_header.image_file_header.size_of_optional_header as u64,
 		);
 
-		let mut sections = Vec::with_capacity(pe_header.image_file_header.number_of_sections as usize);
+		let mut sections =
+			Vec::with_capacity(pe_header.image_file_header.number_of_sections as usize);
 		for _ in 0..pe_header.image_file_header.number_of_sections as usize {
 			let header = SectionHeader::read(stream, &())?;
 			let position = stream.position();
@@ -52,7 +55,11 @@ impl FromByteStream for PEFile {
 			stream.set_position(position);
 		}
 
-		Ok(Self { dos_header, pe_header, sections })
+		Ok(Self {
+			dos_header,
+			pe_header,
+			sections,
+		})
 	}
 }
 
@@ -214,11 +221,11 @@ impl FromByteStream for ImageOptionalHeader {
 			0x010B => {
 				stream.set_position(start);
 				Ok(Self::PE32(ImageOptionalHeader32::read(stream, &())?))
-			}
+			},
 			0x020B => {
 				stream.set_position(start);
 				Ok(Self::PE64(ImageOptionalHeader64::read(stream, &())?))
-			}
+			},
 			_ => Err(Error::from(ErrorKind::InvalidData)),
 		}
 	}

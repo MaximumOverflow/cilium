@@ -178,7 +178,7 @@ pub mod coded_index {
 
 	use crate::raw::heaps::table::TableKind;
 	use std::fmt::{Debug, Formatter};
-	use crate::raw::indices::metadata_token::{MetadataTokenKind,  MetadataToken, RawMetadataToken};
+	use crate::raw::indices::metadata_token::{MetadataTokenKind, MetadataToken, RawMetadataToken};
 	use crate::raw::indices::sizes::CodedIndexSizes;
 	use crate::utilities::FromByteStream;
 
@@ -301,7 +301,6 @@ pub mod coded_index {
 				i += 1;
 			}
 
-			
 			2 + 2 * (max > (1 << (16 - bits))) as usize
 		}
 
@@ -312,9 +311,9 @@ pub mod coded_index {
 					let tokens = TABLES[*self as usize];
 					match tokens.len() {
 						0 | 1 => 0,
-						_ => u32::MAX.overflowing_shr((tokens.len() as u32 - 1).leading_zeros()).0
+						_ => u32::MAX.overflowing_shr((tokens.len() as u32 - 1).leading_zeros()).0,
 					}
-				}
+				},
 			}
 		}
 
@@ -324,7 +323,7 @@ pub mod coded_index {
 				_ => {
 					let tokens = TABLES[*self as usize];
 					32 - (tokens.len() as u32 - 1).leading_zeros()
-				}
+				},
 			}
 		}
 
@@ -335,7 +334,7 @@ pub mod coded_index {
 				_ => {
 					let tables = TABLES[*self as usize];
 					((value & self.mask()) as usize) < tables.len()
-				}
+				},
 			}
 		}
 
@@ -348,7 +347,7 @@ pub mod coded_index {
 					3 => MetadataTokenKind::MemberRef,
 					_ => unreachable!(),
 				},
-				_ => TOKENS[*self as usize][discriminant as usize]
+				_ => TOKENS[*self as usize][discriminant as usize],
 			}
 		}
 	}

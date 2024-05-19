@@ -32,11 +32,11 @@ impl GuidHeap {
 				let offset = (idx.0 - 1) * size_of::<Uuid>();
 				let bytes = self.data.get(offset..offset + size_of::<Uuid>())?;
 				Some(Uuid::from_slice_le(bytes).unwrap())
-			}
+			},
 		}
 	}
 
-	pub fn guids(&self) -> impl Iterator<Item=Uuid> + '_ {
+	pub fn guids(&self) -> impl Iterator<Item = Uuid> + '_ {
 		(1..=self.len()).map(|i| self.get(GuidIndex(i)).unwrap())
 	}
 }

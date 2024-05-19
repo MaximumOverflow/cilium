@@ -51,7 +51,6 @@ impl MetadataHeap {
 	}
 }
 
-
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct StringIndex(usize);
 

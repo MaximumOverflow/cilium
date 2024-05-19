@@ -6,12 +6,18 @@ use std::iter::repeat_with;
 #[inline]
 pub(crate) unsafe fn read_pod_from_stream<T: Copy>(stream: &mut impl Read) -> std::io::Result<T> {
 	let mut value = MaybeUninit::<T>::uninit();
-	stream.read_exact(from_raw_parts_mut(value.as_mut_ptr() as *mut u8, size_of::<T>()))?;
+	stream.read_exact(from_raw_parts_mut(
+		value.as_mut_ptr() as *mut u8,
+		size_of::<T>(),
+	))?;
 	Ok(value.assume_init())
 }
 
 #[inline]
-pub(crate) fn read_bytes_slice_from_stream(stream: &mut Cursor<impl AsRef<[u8]>>, count: usize) -> std::io::Result<&[u8]> {
+pub(crate) fn read_bytes_slice_from_stream(
+	stream: &mut Cursor<impl AsRef<[u8]>>,
+	count: usize,
+) -> std::io::Result<&[u8]> {
 	let start = stream.position() as usize;
 	let range = start..start + count;
 	if range.len() < count {
@@ -22,17 +28,24 @@ pub(crate) fn read_bytes_slice_from_stream(stream: &mut Cursor<impl AsRef<[u8]>>
 }
 
 #[inline(never)]
-pub(crate) fn read_string_from_stream_into<'a, const ROUND: usize>(stream: &mut Cursor<impl AsRef<[u8]>>, buffer: &'a mut [u8]) -> std::io::Result<&'a str> {
+pub(crate) fn read_string_from_stream_into<'a, const ROUND: usize>(
+	stream: &mut Cursor<impl AsRef<[u8]>>,
+	buffer: &'a mut [u8],
+) -> std::io::Result<&'a str> {
 	let position = stream.position();
 	let max_len = stream.read(buffer)?;
 	let str_end = buffer.iter().position(|v| *v == b'\0').unwrap_or(max_len);
-	let str = std::str::from_utf8(&buffer[..str_end]).map_err(|_| Error::from(ErrorKind::InvalidData))?;
+	let str =
+		std::str::from_utf8(&buffer[..str_end]).map_err(|_| Error::from(ErrorKind::InvalidData))?;
 	let advance = round_to_multiple_of::<ROUND>(str_end + 1) as u64;
 	stream.seek(SeekFrom::Start(position + advance))?;
 	Ok(str)
 }
 
-pub trait FromByteStream where Self: Sized {
+pub trait FromByteStream
+where
+	Self: Sized,
+{
 	type Deps;
 	fn read(stream: &mut Cursor<&[u8]>, deps: &Self::Deps) -> std::io::Result<Self>;
 }
@@ -61,7 +74,7 @@ macro_rules! impl_from_byte_stream {
 				}
 			}
 		}
-	}
+	};
 }
 
 pub(crate) use impl_from_byte_stream;
@@ -106,17 +119,14 @@ pub(crate) const fn round_to_multiple_of<const MULTIPLE: usize>(value: usize) ->
 	((value + (MULTIPLE - 1)) / MULTIPLE) * MULTIPLE
 }
 
-pub(crate) fn enumerate_set_bits(mut value: u64) -> impl Iterator<Item=usize> {
-	repeat_with(move || {
-		match value.trailing_zeros() {
-			usize::BITS => usize::MAX,
-			idx => {
-				let mask = !(1u64 << idx as u64);
-				value &= mask;
-				idx as usize
-			},
-		}
-	}).take_while(|i| {
-		*i != usize::MAX
+pub(crate) fn enumerate_set_bits(mut value: u64) -> impl Iterator<Item = usize> {
+	repeat_with(move || match value.trailing_zeros() {
+		usize::BITS => usize::MAX,
+		idx => {
+			let mask = !(1u64 << idx as u64);
+			value &= mask;
+			idx as usize
+		},
 	})
+	.take_while(|i| *i != usize::MAX)
 }
