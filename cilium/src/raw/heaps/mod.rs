@@ -1,14 +1,14 @@
-use std::io::{Cursor, ErrorKind, Read, Seek};
+use std::io::{Cursor, ErrorKind, Read};
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 
 use owning_ref::ArcRef;
-use crate::heaps::blob::BlobHeap;
-use crate::heaps::guid::GuidHeap;
-use crate::heaps::string::{StringHeap, UserStringHeap};
+pub use crate::raw::heaps::blob::BlobHeap;
+pub use crate::raw::heaps::guid::GuidHeap;
+pub use crate::raw::heaps::string::{StringHeap, UserStringHeap};
 
-use crate::heaps::table::TableHeap;
-use crate::indices::sizes::{BlobIndexSize, GuidIndexSize, StringIndexSize};
+use crate::raw::heaps::table::TableHeap;
+use crate::raw::indices::sizes::{BlobIndexSize, GuidIndexSize, StringIndexSize};
 use crate::utilities::{FromByteStream, read_string_from_stream_into};
 
 pub mod table;
@@ -16,22 +16,16 @@ mod guid;
 mod string;
 mod blob;
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub enum MetadataHeapKind {
-	Blob,
-	GUID,
-	Table,
-	String,
-	UserString,
+#[derive(Debug)]
+pub enum MetadataHeap {
+	Blob(BlobHeap),
+	Guid(GuidHeap),
+	Table(TableHeap),
+	String(StringHeap),
+	UserString(UserStringHeap),
 }
 
-pub trait MetadataHeap: Debug {
-	fn name(&self) -> &str;
-	fn data(&self) -> &[u8];
-	fn kind(&self) -> MetadataHeapKind;
-}
-
-impl dyn MetadataHeap {
+impl MetadataHeap {
 	pub fn read(stream: &mut Cursor<&[u8]>, data: &ArcRef<[u8]>) -> std::io::Result<Arc<Self>> {
 		if stream.get_ref().as_ptr() != data.as_ptr() {
 			return Err(ErrorKind::InvalidInput.into());
@@ -47,11 +41,11 @@ impl dyn MetadataHeap {
 		let data = data.clone().map(|s| &s[range]);
 
 		match name {
-			"#Blob" => Ok(Arc::new(BlobHeap::from(data))),
-			"#US" => Ok(Arc::new(UserStringHeap::from(data))),
-			"#~" => Ok(Arc::new(TableHeap::try_from(data)?)),
-			"#GUID" => Ok(Arc::new(GuidHeap::try_from(data)?)),
-			"#Strings" => Ok(Arc::new(StringHeap::try_from(data)?)),
+			"#Blob" => Ok(Arc::new(Self::Blob(BlobHeap::from(data)))),
+			"#US" => Ok(Arc::new(Self::UserString(UserStringHeap::from(data)))),
+			"#~" => Ok(Arc::new(Self::Table(TableHeap::try_from(data)?))),
+			"#GUID" => Ok(Arc::new(Self::Guid(GuidHeap::try_from(data)?))),
+			"#Strings" => Ok(Arc::new(Self::String(StringHeap::try_from(data)?))),
 			_ => unimplemented!("Unimplemented MetadataHeap kind {:?}", name),
 		}
 	}
@@ -94,7 +88,7 @@ impl FromByteStream for GuidIndex {
 	}
 }
 
-pub(super) struct SizeDebugWrapper(usize);
+pub(crate) struct SizeDebugWrapper(usize);
 impl Debug for SizeDebugWrapper {
 	#[inline]
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {

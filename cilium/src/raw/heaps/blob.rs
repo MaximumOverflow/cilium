@@ -1,4 +1,4 @@
-use crate::heaps::{MetadataHeap, MetadataHeapKind, SizeDebugWrapper};
+use crate::raw::heaps::SizeDebugWrapper;
 use std::fmt::{Debug, Formatter};
 use owning_ref::ArcRef;
 
@@ -9,20 +9,6 @@ pub struct BlobHeap {
 impl From<ArcRef<[u8]>> for BlobHeap {
 	fn from(data: ArcRef<[u8]>) -> Self {
 		Self { data }
-	}
-}
-
-impl MetadataHeap for BlobHeap {
-	fn name(&self) -> &str {
-		"#Blob"
-	}
-
-	fn data(&self) -> &[u8] {
-		self.data.as_ref()
-	}
-
-	fn kind(&self) -> MetadataHeapKind {
-		MetadataHeapKind::Blob
 	}
 }
 

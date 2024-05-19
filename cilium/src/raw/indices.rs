@@ -1,12 +1,8 @@
-use std::fmt::Debug;
-use crate::heaps::table::Table;
-use crate::utilities::FromByteStream;
-
 pub mod metadata_token {
 	use std::fmt::{Debug, Formatter};
 	use std::io::{Cursor, ErrorKind};
 
-	use crate::FromByteStream;
+	use crate::utilities::FromByteStream;
 
 	macro_rules! define_metadata_token {
 		($($id: ident = $discriminant: literal),*) => {
@@ -180,10 +176,10 @@ pub mod metadata_token {
 pub mod coded_index {
 	use std::io::{Cursor, ErrorKind, Read};
 
-	use crate::heaps::table::TableKind;
+	use crate::raw::heaps::table::TableKind;
 	use std::fmt::{Debug, Formatter};
-	use crate::indices::metadata_token::{MetadataTokenKind,  MetadataToken, RawMetadataToken};
-	use crate::indices::sizes::CodedIndexSizes;
+	use crate::raw::indices::metadata_token::{MetadataTokenKind,  MetadataToken, RawMetadataToken};
+	use crate::raw::indices::sizes::CodedIndexSizes;
 	use crate::utilities::FromByteStream;
 
 	macro_rules! define_coded_index {
@@ -213,7 +209,7 @@ pub mod coded_index {
 					type Error = ();
 					fn try_from(value: u32) -> Result<Self, Self::Error> {
 						match CodedIndexKind::$id.is_valid(value) {
-							false => Err(panic!()),
+							false => Err(()),
 							true => Ok(Self(value)),
 						}
 					}
@@ -232,9 +228,7 @@ pub mod coded_index {
 
 				impl From<$id> for RawMetadataToken {
 					fn from(value: $id) -> Self {
-						const MASK: u32 = CodedIndexKind::$id.mask();
 						const BITS: u32 = CodedIndexKind::$id.mask_bits();
-						let tokens = TOKENS[CodedIndexKind::$id as usize];
 						let token = CodedIndexKind::$id.token_kind(value.0);
 						let val = ((token as u32) << 24) | value.0 >> BITS;
 						RawMetadataToken::try_from(val).unwrap()
@@ -249,9 +243,9 @@ pub mod coded_index {
 				}
 
 				$(
-					impl From<$id> for crate::indices::metadata_token::$variant {
+					impl From<$id> for crate::raw::indices::metadata_token::$variant {
 						fn from(value: $id) -> Self {
-							use crate::indices::metadata_token::*;
+							use crate::raw::indices::metadata_token::*;
 							let token = RawMetadataToken::from(value);
 							$variant::try_from(token).unwrap()
 						}
@@ -307,8 +301,8 @@ pub mod coded_index {
 				i += 1;
 			}
 
-			let size =  2 + 2 * (max > (1 << (16 - bits))) as usize;
-			return size;
+			
+			2 + 2 * (max > (1 << (16 - bits))) as usize
 		}
 
 		pub const fn mask(&self) -> u32 {
@@ -337,10 +331,7 @@ pub mod coded_index {
 		pub const fn is_valid(&self, value: u32) -> bool {
 			let discriminant = value & self.mask();
 			match self {
-				CodedIndexKind::CustomAttributeType => match discriminant {
-					2 | 3 => true,
-					_ => false,
-				},
+				CodedIndexKind::CustomAttributeType => matches!(discriminant, 2 | 3),
 				_ => {
 					let tables = TABLES[*self as usize];
 					((value & self.mask()) as usize) < tables.len()
@@ -366,7 +357,7 @@ pub mod coded_index {
 pub(crate) mod sizes {
 	use std::alloc::Layout;
 
-	use crate::indices::coded_index::CodedIndexKind;
+	use crate::raw::indices::coded_index::CodedIndexKind;
 
 	pub struct IndexSizes {
 		guid: GuidIndexSize,
@@ -392,8 +383,8 @@ pub(crate) mod sizes {
 				val.guid = GuidIndexSize(2 + 2 * ((heap_sizes & 0x2) != 0) as usize);
 				val.string = StringIndexSize(2 + 2 * ((heap_sizes & 0x1) != 0) as usize);
 
-				for i in 0..64 {
-					val.tables.0[i] = 2 + 2 * (table_lens[i] > 65536) as usize;
+				for (size, len) in val.tables.0.iter_mut().zip(table_lens) {
+					*size = 2 + 2 * (*len > 65536) as usize
 				}
 
 				for i in 0..14 {

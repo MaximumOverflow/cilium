@@ -3,7 +3,7 @@ use std::io::{Error, ErrorKind};
 
 use owning_ref::ArcRef;
 
-use crate::heaps::{MetadataHeap, MetadataHeapKind, SizeDebugWrapper, StringIndex};
+use crate::raw::heaps::{SizeDebugWrapper, StringIndex};
 
 pub struct StringHeap {
 	data: ArcRef<[u8]>,
@@ -27,20 +27,6 @@ impl StringHeap {
 	}
 }
 
-impl MetadataHeap for StringHeap {
-	fn name(&self) -> &str {
-		"#Strings"
-	}
-
-	fn data(&self) -> &[u8] {
-		self.data.as_ref()
-	}
-
-	fn kind(&self) -> MetadataHeapKind {
-		MetadataHeapKind::String
-	}
-}
-
 impl Debug for StringHeap {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
 		let mut dbg = f.debug_struct("StringHeap");
@@ -56,20 +42,6 @@ pub struct UserStringHeap {
 impl From<ArcRef<[u8]>> for UserStringHeap {
 	fn from(data: ArcRef<[u8]>) -> Self {
 		Self { data }
-	}
-}
-
-impl MetadataHeap for UserStringHeap {
-	fn name(&self) -> &str {
-		"#US"
-	}
-
-	fn data(&self) -> &[u8] {
-		self.data.as_ref()
-	}
-
-	fn kind(&self) -> MetadataHeapKind {
-		MetadataHeapKind::UserString
 	}
 }
 

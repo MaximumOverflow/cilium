@@ -1,14 +1,8 @@
+use cilium::raw::heaps::table::{AssemblyTable, TableHeap};
+use cilium::raw::assembly::Assembly;
+use cilium::raw::FromByteStream;
+use cilium::raw::pe::PEFile;
 use std::io::Cursor;
-use std::time::Duration;
-use crate::assembly::Assembly;
-use crate::pe::PEFile;
-use crate::utilities::FromByteStream;
-
-mod pe;
-mod assembly;
-mod utilities;
-mod indices;
-mod heaps;
 
 fn main() {
     let pe = {
@@ -17,4 +11,6 @@ fn main() {
         PEFile::read(&mut cursor, &()).unwrap()
     };
     let assembly = Assembly::try_from(pe).unwrap();
+    let tables = assembly.metadata_root().get_heap::<TableHeap>().unwrap();
+    let _table =  tables.get_table::<AssemblyTable>().unwrap();
 }

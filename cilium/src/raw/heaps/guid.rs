@@ -1,5 +1,5 @@
 use std::fmt::{Debug, Formatter};
-use crate::heaps::{GuidIndex, MetadataHeap, MetadataHeapKind};
+use crate::raw::heaps::{GuidIndex};
 use std::io::{Error, ErrorKind};
 use owning_ref::ArcRef;
 use std::mem::size_of;
@@ -19,6 +19,7 @@ impl TryFrom<ArcRef<[u8]>> for GuidHeap {
 	}
 }
 
+#[allow(clippy::len_without_is_empty)]
 impl GuidHeap {
 	pub fn len(&self) -> usize {
 		self.data.len() / size_of::<Uuid>()
@@ -37,20 +38,6 @@ impl GuidHeap {
 
 	pub fn guids(&self) -> impl Iterator<Item=Uuid> + '_ {
 		(1..=self.len()).map(|i| self.get(GuidIndex(i)).unwrap())
-	}
-}
-
-impl MetadataHeap for GuidHeap {
-	fn name(&self) -> &str {
-		"#GUID"
-	}
-
-	fn data(&self) -> &[u8] {
-		self.data.as_ref()
-	}
-
-	fn kind(&self) -> MetadataHeapKind {
-		MetadataHeapKind::GUID
 	}
 }
 

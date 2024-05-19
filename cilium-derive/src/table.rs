@@ -72,7 +72,6 @@ pub fn derive(tokens: proc_macro::TokenStream) -> TokenStream {
 			fn len(&self) -> usize {
 				self.rows.len()
 			}
-
             fn kind(&self) -> TableKind {
 				TableKind::#ident
 			}

@@ -1,3 +1,4 @@
+use std::any::TypeId;
 use std::fmt::Debug;
 use std::io::{Cursor, Error, ErrorKind, Read};
 use std::sync::Arc;
@@ -7,9 +8,9 @@ use owning_ref::ArcRef;
 
 use cilium_derive::{FromRepr, Table};
 
-use crate::heaps::{BlobIndex, GuidIndex, MetadataHeap, MetadataHeapKind, StringIndex};
-use crate::indices::coded_index::{CustomAttributeType, HasConstant, HasCustomAttribute, HasFieldMarshal, HasSemantics, Implementation, MemberForwarded, MemberRefParent, MethodDefOrRef, TypeDefOrRef, TypeOrMethodDef};
-use crate::indices::sizes::*;
+use crate::raw::heaps::{BlobIndex, GuidIndex, StringIndex};
+use crate::raw::indices::coded_index::{CustomAttributeType, HasConstant, HasCustomAttribute, HasFieldMarshal, HasSemantics, Implementation, MemberForwarded, MemberRefParent, MethodDefOrRef, TypeDefOrRef, TypeOrMethodDef};
+use crate::raw::indices::sizes::*;
 use crate::utilities::{enumerate_set_bits, FromByteStream, impl_from_byte_stream};
 
 #[derive(Debug)]
@@ -19,17 +20,21 @@ pub struct TableHeap {
 	tables: Vec<Arc<dyn Table>>,
 }
 
-impl MetadataHeap for TableHeap {
-	fn name(&self) -> &str {
-		"~#"
+impl TableHeap {
+	pub fn minor_version(&self) -> u8 {
+		self.minor_version
 	}
-
-	fn data(&self) -> &[u8] {
-		&[]
+	pub fn major_version(&self) -> u8 {
+		self.major_version
 	}
-
-	fn kind(&self) -> MetadataHeapKind {
-		MetadataHeapKind::Table
+	pub fn get_table<T: Table + 'static>(&self) -> Option<&T> {
+		for table in &self.tables {
+			if Table::type_id(&**table) == TypeId::of::<T>() {
+				let table = table.as_ref() as *const dyn Table as *const T;
+				return Some(unsafe { &*table });
+			}
+		}
+		None
 	}
 }
 
@@ -198,18 +203,22 @@ pub enum TableKind {
 	CustomDebugInformation = 0x37,
 }
 
-pub trait Table: Debug {
+#[allow(clippy::len_without_is_empty)]
+pub trait Table: 'static + Debug + Send + Sync {
 	fn len(&self) -> usize;
 	fn kind(&self) -> TableKind;
+	fn type_id(&self) -> TypeId {
+		TypeId::of::<Self>()
+	}
 }
 
 #[derive(Debug, Clone, Table)]
 pub struct Module {
-	generation: u16,
-	name: StringIndex,
-	mv_id: GuidIndex,
-	enc_id: GuidIndex,
-	enc_base_id: GuidIndex,
+	pub generation: u16,
+	pub name: StringIndex,
+	pub mv_id: GuidIndex,
+	pub enc_id: GuidIndex,
+	pub enc_base_id: GuidIndex,
 }
 
 bitflags! {
@@ -299,39 +308,12 @@ impl_from_byte_stream!(TypeAttributes);
 
 #[derive(Debug, Clone, Table)]
 pub struct TypeDef {
-	flags: TypeAttributes,
-	type_name: StringIndex,
-	type_namespace: StringIndex,
-	extends: TypeDefOrRef,
-	field_list: FieldIndex,
-	method_list: MethodDefIndex,
-}
-
-fn read_type_defspub(stream: &mut Cursor<&[u8]>, idx_sizes: &IndexSizes, len: usize) -> std::io::Result<TypeDefTable> {
-	let mut rows = Vec::with_capacity(len);
-	rows.push(
-		TypeDef {
-			flags: <TypeAttributes>::read(stream, idx_sizes.as_ref())?,
-			type_name: <StringIndex>::read(stream, idx_sizes.as_ref())?,
-			type_namespace: <StringIndex>::read(stream, idx_sizes.as_ref())?,
-			extends: <TypeDefOrRef>::read(stream, idx_sizes.as_ref())?,
-			field_list: FieldIndex(0),
-			method_list: MethodDefIndex(0),
-		}
-	);
-	for i in 1..len {
-		let row = TypeDef {
-			flags: <TypeAttributes>::read(stream, idx_sizes.as_ref())?,
-			type_name: <StringIndex>::read(stream, idx_sizes.as_ref())?,
-			type_namespace: <StringIndex>::read(stream, idx_sizes.as_ref())?,
-			extends: <TypeDefOrRef>::read(stream, idx_sizes.as_ref())?,
-			field_list: <FieldIndex>::read(stream, idx_sizes.as_ref())?,
-			method_list: <MethodDefIndex>::read(stream, idx_sizes.as_ref())?,
-		};
-		println!("{:X?}", row);
-		rows.push(row)
-	}
-	Ok(TypeDefTable { rows })
+	pub flags: TypeAttributes,
+	pub type_name: StringIndex,
+	pub type_namespace: StringIndex,
+	pub extends: TypeDefOrRef,
+	pub field_list: FieldIndex,
+	pub method_list: MethodDefIndex,
 }
 
 bitflags! {
@@ -385,9 +367,9 @@ impl_from_byte_stream!(FieldAttributes);
 
 #[derive(Debug, Clone, Table)]
 pub struct Field {
-	flags: FieldAttributes,
-	name: StringIndex,
-	signature: BlobIndex,
+	pub flags: FieldAttributes,
+	pub name: StringIndex,
+	pub signature: BlobIndex,
 }
 
 bitflags! {
@@ -407,12 +389,12 @@ impl_from_byte_stream!(MethodImplAttributes);
 
 #[derive(Debug, Clone, Table)]
 pub struct MethodDef {
-	rva: u32,
-	impl_flags: MethodAttributes,
-	flags: MethodAttributes,
-	name: StringIndex,
-	signature: BlobIndex,
-	param_list: ParamIndex,
+	pub rva: u32,
+	pub impl_flags: MethodAttributes,
+	pub flags: MethodAttributes,
+	pub name: StringIndex,
+	pub signature: BlobIndex,
+	pub param_list: ParamIndex,
 }
 
 bitflags! {
@@ -426,66 +408,66 @@ impl_from_byte_stream!(ParamAttributes);
 
 #[derive(Debug, Clone, Table)]
 pub struct Param {
-	flags: ParamAttributes,
-	sequence: u16,
-	name: StringIndex,
+	pub flags: ParamAttributes,
+	pub sequence: u16,
+	pub name: StringIndex,
 }
 
 #[derive(Debug, Clone, Table)]
 pub struct InterfaceImpl {
-	class: TypeDefIndex,
-	interface: TypeDefOrRef,
+	pub class: TypeDefIndex,
+	pub interface: TypeDefOrRef,
 }
 
 #[derive(Debug, Clone, Table)]
 pub struct MemberRef {
-	class: MemberRefParent,
-	name: StringIndex,
-	signature: BlobIndex,
+	pub class: MemberRefParent,
+	pub name: StringIndex,
+	pub signature: BlobIndex,
 }
 
 #[derive(Debug, Clone, Table)]
 pub struct Constant {
-	ty: [u8; 2],
-	parent: HasConstant,
-	value: BlobIndex,
+	pub ty: [u8; 2],
+	pub parent: HasConstant,
+	pub value: BlobIndex,
 }
 
 #[derive(Debug, Clone, Table)]
 pub struct CustomAttribute {
-	parent: HasCustomAttribute,
-	ty: CustomAttributeType,
-	value: BlobIndex,
+	pub parent: HasCustomAttribute,
+	pub ty: CustomAttributeType,
+	pub value: BlobIndex,
 }
 
 #[derive(Debug, Clone, Table)]
 pub struct FieldMarshal {
-	parent: HasFieldMarshal,
-	native_type: BlobIndex,
+	pub parent: HasFieldMarshal,
+	pub native_type: BlobIndex,
 }
 
 #[derive(Debug, Clone, Table)]
 pub struct ClassLayout {
-	packing_size: u16,
-	class_size: u32,
-	parent: TypeDefIndex,
+	pub packing_size: u16,
+	pub class_size: u32,
+	pub parent: TypeDefIndex,
 }
 
 #[derive(Debug, Clone, Table)]
 pub struct FieldLayout {
-	offset: u32,
-	field: FieldIndex,
+	pub offset: u32,
+	pub field: FieldIndex,
 }
 
 #[derive(Debug, Clone, Table)]
 pub struct StandAloneSig {
-	signature: BlobIndex
+	pub signature: BlobIndex
 }
 
 #[derive(Debug, Clone, Table)]
 pub struct EventMap {
-	parent: TypeDefIndex,
-	event_list: EventIndex
+	pub parent: TypeDefIndex,
+	pub event_list: EventIndex
 }
 
 bitflags! {
@@ -499,15 +481,15 @@ impl_from_byte_stream!(EventAttributes);
 
 #[derive(Debug, Clone, Table)]
 pub struct Event {
-	flags: EventAttributes,
-	name: StringIndex,
-	ty: TypeDefOrRef,
+	pub flags: EventAttributes,
+	pub name: StringIndex,
+	pub ty: TypeDefOrRef,
 }
 
 #[derive(Debug, Clone, Table)]
 pub struct PropertyMap {
-	parent: TypeDefIndex,
-	property_list: PropertyIndex
+	pub parent: TypeDefIndex,
+	pub property_list: PropertyIndex
 }
 
 bitflags! {
@@ -521,9 +503,9 @@ impl_from_byte_stream!(PropertyAttributes);
 
 #[derive(Debug, Clone, Table)]
 pub struct Property {
-	flags: PropertyAttributes,
-	name: StringIndex,
-	ty: BlobIndex,
+	pub flags: PropertyAttributes,
+	pub name: StringIndex,
+	pub ty: BlobIndex,
 }
 
 bitflags! {
@@ -537,26 +519,26 @@ impl_from_byte_stream!(MethodSemanticsAttributes);
 
 #[derive(Debug, Clone, Table)]
 pub struct MethodSemantics {
-	flags: MethodSemanticsAttributes,
-	method: MethodDefIndex,
-	association: HasSemantics,
+	pub flags: MethodSemanticsAttributes,
+	pub method: MethodDefIndex,
+	pub association: HasSemantics,
 }
 
 #[derive(Debug, Clone, Table)]
 pub struct MethodImpl {
-	class: TypeDefIndex,
-	body: MethodDefOrRef,
-	declaration: MethodDefOrRef,
+	pub class: TypeDefIndex,
+	pub body: MethodDefOrRef,
+	pub declaration: MethodDefOrRef,
 }
 
 #[derive(Debug, Clone, Table)]
 pub struct ModuleRef {
-	name: StringIndex,
+	pub name: StringIndex,
 }
 
 #[derive(Debug, Clone, Table)]
 pub struct TypeSpec {
-	signature: BlobIndex,
+	pub signature: BlobIndex,
 }
 
 bitflags! {
@@ -570,16 +552,16 @@ impl_from_byte_stream!(PInvokeAttributes);
 
 #[derive(Debug, Clone, Table)]
 pub struct ImplMap {
-	flags: PInvokeAttributes,
-	member_forwarded: MemberForwarded,
-	import_name: StringIndex,
-	import_scope: ModuleRefIndex,
+	pub flags: PInvokeAttributes,
+	pub member_forwarded: MemberForwarded,
+	pub import_name: StringIndex,
+	pub import_scope: ModuleRefIndex,
 }
 
 #[derive(Debug, Clone, Table)]
 pub struct FieldRVA {
-	rva: u32,
-	field: FieldIndex,
+	pub rva: u32,
+	pub field: FieldIndex,
 }
 
 #[repr(u32)]
@@ -613,15 +595,15 @@ impl_from_byte_stream!(AssemblyFlags);
 
 #[derive(Debug, Clone, Table)]
 pub struct Assembly {
-	hash_algorithm: AssemblyHashAlgorithm,
-	major_version: u16,
-	minor_version: u16,
-	build_number: u16,
-	revision_number: u16,
-	flags: AssemblyFlags,
-	public_key: BlobIndex,
-	name: StringIndex,
-	culture: StringIndex,
+	pub hash_algorithm: AssemblyHashAlgorithm,
+	pub major_version: u16,
+	pub minor_version: u16,
+	pub build_number: u16,
+	pub revision_number: u16,
+	pub flags: AssemblyFlags,
+	pub public_key: BlobIndex,
+	pub name: StringIndex,
+	pub culture: StringIndex,
 }
 
 bitflags! {
@@ -635,16 +617,16 @@ impl_from_byte_stream!(ManifestResourceAttributes);
 
 #[derive(Debug, Clone, Table)]
 pub struct ManifestResource {
-	offset: u32,
-	flags: ManifestResourceAttributes,
-	name: StringIndex,
-	implementation: Implementation,
+	pub offset: u32,
+	pub flags: ManifestResourceAttributes,
+	pub name: StringIndex,
+	pub implementation: Implementation,
 }
 
 #[derive(Debug, Clone, Table)]
 pub struct NestedClass {
-	nested_class: TypeDefIndex,
-	enclosing_class: TypeDefIndex,
+	pub nested_class: TypeDefIndex,
+	pub enclosing_class: TypeDefIndex,
 }
 
 bitflags! {
@@ -658,20 +640,20 @@ impl_from_byte_stream!(GenericParamAttributes);
 
 #[derive(Debug, Clone, Table)]
 pub struct GenericParam {
-	number: u16,
-	flags: GenericParamAttributes,
-	owner: TypeOrMethodDef,
-	name: StringIndex,
+	pub number: u16,
+	pub flags: GenericParamAttributes,
+	pub owner: TypeOrMethodDef,
+	pub name: StringIndex,
 }
 
 #[derive(Debug, Clone, Table)]
 pub struct MethodSpec {
-	method: MethodDefOrRef,
-	instantiation: BlobIndex,
+	pub method: MethodDefOrRef,
+	pub instantiation: BlobIndex,
 }
 
 #[derive(Debug, Clone, Table)]
 pub struct GenericParamConstraint {
-	owner: GenericParamIndex,
-	constraint: TypeDefOrRef,
+	pub owner: GenericParamIndex,
+	pub constraint: TypeDefOrRef,
 }

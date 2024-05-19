@@ -1,10 +1,7 @@
-use std::borrow::Borrow;
 use std::io::{Cursor, Error, ErrorKind, Read, Seek, SeekFrom};
-use std::iter::repeat_with;
 use std::mem::{MaybeUninit, size_of};
 use std::slice::from_raw_parts_mut;
-use std::sync::Arc;
-use owning_ref::{ArcRef, OwningRef, StringRef};
+use std::iter::repeat_with;
 
 #[inline]
 pub(crate) unsafe fn read_pod_from_stream<T: Copy>(stream: &mut impl Read) -> std::io::Result<T> {
@@ -75,7 +72,7 @@ macro_rules! impl_from_le_byte_stream {
 			type Deps = ();
 			#[inline]
 			fn read(stream: &mut std::io::Cursor<&[u8]>, _: &Self::Deps) -> std::io::Result<Self> {
-				let mut bytes = <[u8; size_of::<Self>()]>::read(stream, &())?;
+				let bytes = <[u8; size_of::<Self>()]>::read(stream, &())?;
 				Ok(Self::from_le_bytes(bytes))
 			}
 		}

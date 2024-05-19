@@ -1,14 +1,13 @@
-use std::collections::HashMap;
-use std::io::{Cursor, ErrorKind, Read, Seek, SeekFrom};
-use std::mem::size_of;
+use std::io::{Cursor, Error, ErrorKind, Read, Seek, SeekFrom};
 use std::sync::Arc;
 
 use bitflags::bitflags;
 use owning_ref::ArcRef;
 
-use crate::heaps::{MetadataHeap, MetadataHeapKind};
-use crate::indices::metadata_token::{MetadataToken, RawMetadataToken};
-use crate::pe::{DataDirectory, ImageOptionalHeader, PEFile};
+use crate::raw::heaps::{BlobHeap, GuidHeap, MetadataHeap, StringHeap, UserStringHeap};
+use crate::raw::heaps::table::TableHeap;
+use crate::raw::indices::metadata_token::RawMetadataToken;
+use crate::raw::pe::{DataDirectory, ImageOptionalHeader, PEFile};
 use crate::utilities::{FromByteStream, impl_from_byte_stream};
 
 #[repr(C)]
@@ -32,11 +31,11 @@ impl_from_byte_stream!(CLIHeader);
 
 #[derive(Debug, Clone)]
 pub struct MetadataRoot {
-    pub major_version: u16,
-    pub minor_version: u16,
-    pub version: Arc<str>,
-    pub flags: u16,
-    pub heaps: HashMap<MetadataHeapKind, Arc<dyn MetadataHeap>>,
+    major_version: u16,
+    minor_version: u16,
+    version: Arc<str>,
+    flags: u16,
+    heaps: Arc<[Arc<MetadataHeap>]>,
 }
 
 impl MetadataRoot {
@@ -60,10 +59,10 @@ impl MetadataRoot {
         let flags = u16::read(&mut stream, &())?;
 
         let stream_header_count = u16::read(&mut stream, &())? as usize;
-        let mut heaps = HashMap::with_capacity(stream_header_count);
+        let mut heaps = vec![];
         for _ in 0..stream_header_count {
-            let heap = <dyn MetadataHeap>::read(&mut stream, data)?;
-            heaps.insert(heap.kind(), heap);
+            let heap = MetadataHeap::read(&mut stream, data)?;
+            heaps.push(heap);
         }
 
         Ok(Self {
@@ -71,8 +70,25 @@ impl MetadataRoot {
             minor_version,
             version,
             flags,
-            heaps,
+            heaps: Arc::from(heaps),
         })
+    }
+
+    pub fn flags(&self) -> u16 {
+        self.flags
+    }
+    pub fn version(&self) -> &str {
+        &self.version
+    }
+    pub fn minor_version(&self) -> u16 {
+        self.minor_version
+    }
+    pub fn major_version(&self) -> u16 {
+        self.major_version
+    }
+    #[allow(private_bounds)]
+    pub fn get_heap<T>(&self) -> Option<&T> where Self: GetHeap<T> {
+        <Self as GetHeap<T>>::get_heap(self)
     }
 }
 
@@ -85,7 +101,7 @@ pub struct Assembly {
 
 bitflags! {
     #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-    struct RuntimeFlags: u32 {
+    pub struct RuntimeFlags: u32 {
         const IL_ONLY = 0x1;
         const REQUIRE_32_BIT = 0x2;
 		const IL_LIBRARY= 0x4;
@@ -95,10 +111,10 @@ bitflags! {
 }
 
 impl TryFrom<PEFile> for Assembly {
-    type Error = std::io::Error;
+    type Error = Error;
     fn try_from(pe: PEFile) -> Result<Self, Self::Error> {
         let rva = match &pe.pe_header.image_optional_header {
-            ImageOptionalHeader::None => panic!(),
+            ImageOptionalHeader::None => return Err(Error::new(ErrorKind::InvalidData, "Missing optional PE header")),
             ImageOptionalHeader::PE32(hdr) => {
                 let Some(data_dir) = hdr.data_directories.get(14) else {
                     return Err(ErrorKind::NotFound.into());
@@ -128,4 +144,63 @@ impl TryFrom<PEFile> for Assembly {
     }
 }
 
-const CLI_HDR_SIZE: usize = size_of::<CLIHeader>();
+impl Assembly {
+    pub fn pe_file(&self) -> &PEFile {
+        &self.pe_file
+    }
+    pub fn cli_header(&self) -> CLIHeader {
+        self.cli_header
+    }
+    pub fn metadata_root(&self) -> &MetadataRoot {
+        &self.metadata_root
+    }
+}
+
+trait GetHeap<T> {
+    fn get_heap(&self) -> Option<&T>;
+}
+
+impl GetHeap<BlobHeap> for MetadataRoot {
+    fn get_heap(&self) -> Option<&BlobHeap> {
+        return self.heaps.iter().find_map(|h| match &**h {
+            MetadataHeap::Blob(h) => Some(h),
+            _ => None,
+        });
+    }
+}
+
+impl GetHeap<GuidHeap> for MetadataRoot {
+    fn get_heap(&self) -> Option<&GuidHeap> {
+        return self.heaps.iter().find_map(|h| match &**h {
+            MetadataHeap::Guid(h) => Some(h),
+            _ => None,
+        });
+    }
+}
+
+impl GetHeap<StringHeap> for MetadataRoot {
+    fn get_heap(&self) -> Option<&StringHeap> {
+        return self.heaps.iter().find_map(|h| match &**h {
+            MetadataHeap::String(h) => Some(h),
+            _ => None,
+        });
+    }
+}
+
+impl GetHeap<UserStringHeap> for MetadataRoot {
+    fn get_heap(&self) -> Option<&UserStringHeap> {
+        return self.heaps.iter().find_map(|h| match &**h {
+            MetadataHeap::UserString(h) => Some(h),
+            _ => None,
+        });
+    }
+}
+
+impl GetHeap<TableHeap> for MetadataRoot {
+    fn get_heap(&self) -> Option<&TableHeap> {
+        return self.heaps.iter().find_map(|h| match &**h {
+            MetadataHeap::Table(h) => Some(h),
+            _ => None,
+        });
+    }
+}

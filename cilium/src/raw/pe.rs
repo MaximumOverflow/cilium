@@ -97,7 +97,10 @@ impl FromByteStream for PEHeader {
 			return Err(Error::from(ErrorKind::InvalidData));
 		}
 		let image_file_header = ImageFileHeader::read(stream, &())?;
-		let image_optional_header = ImageOptionalHeader::read(stream, &())?;
+		let image_optional_header = match image_file_header.size_of_optional_header {
+			0 => ImageOptionalHeader::None,
+			_ => ImageOptionalHeader::read(stream, &())?,
+		};
 		Ok(Self {
 			magic: 0x4550,
 			image_file_header,
@@ -273,10 +276,6 @@ pub struct Section {
 }
 
 impl Section {
-	pub fn raw_data_range(&self) -> Range<u32> {
-		self.header.pointer_to_raw_data..self.header.pointer_to_raw_data + self.header.size_of_raw_data
-	}
-
 	pub fn virtual_data_range(&self) -> Range<u32> {
 		self.header.virtual_address..self.header.virtual_address + self.header.size_of_raw_data
 	}
