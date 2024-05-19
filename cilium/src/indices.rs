@@ -1,8 +1,5 @@
-use std::alloc::Layout;
 use std::fmt::Debug;
 use crate::heaps::table::Table;
-use crate::indices::coded_index::CodedIndexKind;
-
 use crate::utilities::FromByteStream;
 
 pub mod metadata_token {
@@ -57,7 +54,10 @@ pub mod metadata_token {
 			impl Debug for MetadataToken {
 				fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
 					match self {
-						$(Self::$id(v) => write!(f, "MetadataToken::{:?}", v)),*
+						$(Self::$id(v) => {
+							write!(f, "MetadataToken::")?;
+							v.fmt(f)
+						}),*
 					}
 				}
 			}
@@ -83,7 +83,7 @@ pub mod metadata_token {
 			$(
 				#[repr(transparent)]
 				#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-				pub struct $id(usize);
+				pub struct $id (usize);
 
 				impl TryFrom<RawMetadataToken> for $id {
 					type Error = ();
@@ -109,10 +109,9 @@ pub mod metadata_token {
 	}
 	impl Debug for RawMetadataToken {
 		fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-			write!(f, "RawMetadataToken::{:?}", self.kind())?;
-			let mut dbg = f.debug_tuple("");
-			dbg.field(&self.index());
-			dbg.finish()
+			write!(f, "RawMetadataToken::{:?}(", self.kind())?;
+			self.index().fmt(f)?;
+			write!(f, ")")
 		}
 	}
 
@@ -145,7 +144,7 @@ pub mod metadata_token {
 		TypeRef = 0x01,
 		TypeDef = 0x02,
 		Field = 0x04,
-		Method = 0x06,
+		MethodDef = 0x06,
 		Param = 0x08,
 		InterfaceImpl = 0x09,
 		MemberRef = 0x0a,
@@ -179,9 +178,11 @@ pub mod metadata_token {
 }
 
 pub mod coded_index {
-	use std::io::{Read, Cursor, ErrorKind};
+	use std::io::{Cursor, ErrorKind, Read};
+
 	use crate::heaps::table::TableKind;
-	use crate::indices::metadata_token::{MetadataTokenKind, RawMetadataToken};
+	use std::fmt::{Debug, Formatter};
+	use crate::indices::metadata_token::{MetadataTokenKind,  MetadataToken, RawMetadataToken};
 	use crate::indices::sizes::CodedIndexSizes;
 	use crate::utilities::FromByteStream;
 
@@ -195,16 +196,23 @@ pub mod coded_index {
 
 			$(
 				#[repr(transparent)]
-				#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+				#[derive(Copy, Clone, Eq, PartialEq, Hash)]
 				pub struct $id(u32);
+
+				impl Debug for $id {
+					fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+						let token: MetadataToken = (*self).into();
+						write!(f, "{}(", stringify!($id), )?;
+						token.fmt(f)?;
+						write!(f, ")")
+					}
+				}
 
 				impl TryFrom<u32> for $id {
 					type Error = ();
 					fn try_from(value: u32) -> Result<Self, Self::Error> {
-						const MASK: u32 = CodedIndexKind::$id.mask();
-						let tables = TABLES[CodedIndexKind::$id as usize];
-						match ((value & MASK) as usize) < tables.len() {
-							false => Err(()),
+						match CodedIndexKind::$id.is_valid(value) {
+							false => Err(panic!()),
 							true => Ok(Self(value)),
 						}
 					}
@@ -214,14 +222,14 @@ pub mod coded_index {
 					type Deps = CodedIndexSizes;
 					fn read(stream: &mut Cursor<&[u8]>, sizes: &Self::Deps) -> std::io::Result<Self> {
 						let size = sizes.0[CodedIndexKind::$id as usize];
-						let mut value = 0u32.to_ne_bytes();
-						stream.read_exact(&mut value[..size])?;
-						let value = u32::from_le_bytes(value);
+						let mut bytes = 0u32.to_ne_bytes();
+						stream.read_exact(&mut bytes[..size])?;
+						let value = u32::from_le_bytes(bytes);
 						Self::try_from(value).map_err(|_| ErrorKind::InvalidData.into())
 					}
 				}
 
-				impl From<$id> for crate::indices::metadata_token::RawMetadataToken {
+				impl From<$id> for RawMetadataToken {
 					fn from(value: $id) -> Self {
 						const MASK: u32 = CodedIndexKind::$id.mask();
 						const BITS: u32 = CodedIndexKind::$id.mask_bits();
@@ -229,6 +237,13 @@ pub mod coded_index {
 						let token = tokens[(value.0 & MASK) as usize];
 						let val = ((token as u32) << 24) | value.0 >> BITS;
 						RawMetadataToken::try_from(val).unwrap()
+					}
+				}
+
+				impl From<$id> for MetadataToken {
+					fn from(value: $id) -> Self {
+						let raw: RawMetadataToken = value.into();
+						raw.into()
 					}
 				}
 
@@ -252,23 +267,23 @@ pub mod coded_index {
 		TypeDefOrRef: [TypeDef, TypeRef, TypeSpec],
 		HasConstant: [Field, Param, Property],
 		HasCustomAttribute: [
-			Method, Field, TypeRef, TypeDef, Param, InterfaceImpl, MemberRef,
+			MethodDef, Field, TypeRef, TypeDef, Param, InterfaceImpl, MemberRef,
 			Module, DeclSecurity, Property, Event, StandAloneSig, ModuleRef,
 			TypeSpec, Assembly, AssemblyRef, File, ExportedType,
 			ManifestResource, GenericParam, GenericParamConstraint, MethodSpec
 		],
 		HasFieldMarshal: [Field, Param],
-		HasDeclSecurity: [TypeDef, Method, Assembly],
-		MemberRefParent: [TypeDef, TypeRef, ModuleRef, Method, TypeSpec],
+		HasDeclSecurity: [TypeDef, MethodDef, Assembly],
+		MemberRefParent: [TypeDef, TypeRef, ModuleRef, MethodDef, TypeSpec],
 		HasSemantics: [Event, Property],
-		MethodDefOrRef: [Method, MemberRef],
-		MemberForwarded: [Field, Method],
+		MethodDefOrRef: [MethodDef, MemberRef],
+		MemberForwarded: [Field, MethodDef],
 		Implementation: [File, AssemblyRef, ExportedType],
-		CustomAttributeType: [Method, MemberRef],
+		CustomAttributeType: [MethodDef, MemberRef],
 		ResolutionScope: [Module, ModuleRef, AssemblyRef, TypeRef],
-		TypeOrMethodDef: [TypeDef, Method],
+		TypeOrMethodDef: [TypeDef, MethodDef],
 		HasCustomDebugInformation: [
-			Method, Field, TypeRef, TypeDef, Param, InterfaceImpl, MemberRef,
+			MethodDef, Field, TypeRef, TypeDef, Param, InterfaceImpl, MemberRef,
 			Module, DeclSecurity, Property, Event, StandAloneSig, ModuleRef,
 			TypeSpec, Assembly, AssemblyRef, File, ExportedType,
 			ManifestResource, GenericParam, GenericParamConstraint, MethodSpec,
@@ -283,30 +298,57 @@ pub mod coded_index {
 			let bits = self.mask_bits();
 			let tables = TABLES[*self as usize];
 			while i < tables.len() {
-				let size = table_sizes[tables[i] as usize] as usize;
+				let table = tables[i];
+				let size = table_sizes[table as usize] as usize;
 				if max < size {
 					max = size;
 				}
 				i += 1;
 			}
 
-			return 2 + 2 * (max > (1 << (16 - bits))) as usize
+			let size =  2 + 2 * (max > (1 << (16 - bits))) as usize;
+			return size;
 		}
 
 		pub const fn mask(&self) -> u32 {
-			let tokens = TABLES[*self as usize];
-			u32::MAX.overflowing_shr((tokens.len() as u32).leading_zeros()).0
+			match self {
+				CodedIndexKind::CustomAttributeType => 0x7,
+				_ => {
+					let tokens = TABLES[*self as usize];
+					u32::MAX.overflowing_shr((tokens.len() as u32).leading_zeros()).0
+				}
+			}
 		}
 
 		pub const fn mask_bits(&self) -> u32 {
-			let tokens = TABLES[*self as usize];
-			32 - (tokens.len() as u32).leading_zeros()
+			match self {
+				CodedIndexKind::CustomAttributeType => 0x3,
+				_ => {
+					let tokens = TABLES[*self as usize];
+					32 - (tokens.len() as u32).leading_zeros()
+				}
+			}
+		}
+
+		pub const fn is_valid(&self, value: u32) -> bool {
+			let discriminant = value & self.mask();
+			match self {
+				CodedIndexKind::CustomAttributeType => match discriminant {
+					2 | 3 => true,
+					_ => false,
+				},
+				_ => {
+					let tables = TABLES[CodedIndexKind::HasCustomAttribute as usize];
+					((value & self.mask()) as usize) < tables.len()
+				}
+			}
 		}
 	}
 }
 
 pub(crate) mod sizes {
 	use std::alloc::Layout;
+
 	use crate::indices::coded_index::CodedIndexKind;
 
 	pub struct IndexSizes {

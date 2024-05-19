@@ -1,15 +1,14 @@
-use proc_macro2::TokenStream;
+use syn::{Data, DeriveInput, Field, Path};
 use quote::{format_ident, quote};
-use syn::{Data, DeriveInput, Field, Path, Type};
-use syn::parse::Parse;
+use proc_macro2::TokenStream;
 
 pub fn derive(tokens: proc_macro::TokenStream) -> TokenStream {
     let DeriveInput {
         attrs,
         vis,
         ident,
-        generics,
         data,
+        ..
     } = syn::parse(tokens).unwrap();
 
     let data = match data {

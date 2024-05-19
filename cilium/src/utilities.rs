@@ -29,7 +29,7 @@ pub(crate) fn read_string_from_stream_into<'a, const ROUND: usize>(stream: &mut 
 	let max_len = stream.read(buffer)?;
 	let str_end = buffer.iter().position(|v| *v == b'\0').unwrap_or(max_len);
 	let str = std::str::from_utf8(&buffer[..str_end]).map_err(|_| Error::from(ErrorKind::InvalidData))?;
-	let advance = round_to_multiple_of::<ROUND>(str.len()) as i64 - str.len() as i64 - 1;
+	let advance = round_to_multiple_of::<ROUND>(str_end + 1) as i64;
 	stream.seek(SeekFrom::Current(advance))?;
 	Ok(str)
 }
@@ -37,8 +37,8 @@ pub(crate) fn read_string_from_stream_into<'a, const ROUND: usize>(stream: &mut 
 #[inline(never)]
 pub(crate) fn read_string_from_data<const ROUND: usize>(data: ArcRef<[u8]>) -> std::io::Result<(OwningRef<Arc<[u8]>, str>, i64)> {
 	let str_end = data.iter().position(|v| *v == b'\0').unwrap_or(data.len());
-	let str = std::str::from_utf8(&data[..str_end]).map_err(|_| Error::from(ErrorKind::InvalidData))?;
-	let advance = -1 + round_to_multiple_of::<ROUND>(str.len()) as i64 - str.len() as i64;
+	_ = std::str::from_utf8(&data[..str_end]).map_err(|_| Error::from(ErrorKind::InvalidData))?;
+	let advance = round_to_multiple_of::<ROUND>(str_end + 1) as i64;
 	let str = data.map(|data| unsafe {
 		std::str::from_utf8_unchecked(&data[..str_end])
 	});
@@ -50,6 +50,7 @@ pub trait FromByteStream where Self: Sized {
 	fn read(stream: &mut Cursor<&[u8]>, deps: &Self::Deps) -> std::io::Result<Self>;
 }
 
+// TODO handle big endian architectures
 macro_rules! impl_from_byte_stream {
 	($ty: ty) => {
 		impl crate::utilities::FromByteStream for $ty {
@@ -115,7 +116,7 @@ impl<const SIZE: usize> FromByteStream for [u8; SIZE] {
 
 #[inline]
 pub(crate) const fn round_to_multiple_of<const MULTIPLE: usize>(value: usize) -> usize {
-	(value + (MULTIPLE - 1) / MULTIPLE) * MULTIPLE
+	((value + (MULTIPLE - 1)) / MULTIPLE) * MULTIPLE
 }
 
 pub(crate) fn enumerate_set_bits(mut value: u64) -> impl Iterator<Item=usize> {

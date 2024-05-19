@@ -1,4 +1,3 @@
-use std::borrow::Borrow;
 use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Error, ErrorKind};
 use std::mem::size_of;

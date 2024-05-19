@@ -1,6 +1,6 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Data, DeriveInput};
+use syn::{Data, DeriveInput, parse_quote, Type};
 
 pub fn derive(tokens: proc_macro::TokenStream) -> TokenStream {
 	let DeriveInput {
@@ -21,9 +21,10 @@ pub fn derive(tokens: proc_macro::TokenStream) -> TokenStream {
 		panic!("Generics are not supported");
 	}
 
+	let mut repr: Type = parse_quote!(usize);
 	for attr in attrs.iter() {
 		if attr.path().is_ident("repr") {
-			unimplemented!()
+			repr = attr.parse_args::<Type>().unwrap();
 		}
 	}
 
@@ -37,7 +38,7 @@ pub fn derive(tokens: proc_macro::TokenStream) -> TokenStream {
 		let variant_name = &variant.ident;
 		let ident = format_ident!("DISCRIMINANT_{i}");
 		constants.push(quote! {
-			const #ident: usize = #discriminant;
+			const #ident: #repr = #discriminant;
 		});
 		cases.push(quote! {
 			#ident => Some(Self::#variant_name),
@@ -46,7 +47,7 @@ pub fn derive(tokens: proc_macro::TokenStream) -> TokenStream {
 
 	quote! {
 		impl #ident {
-			pub(crate) fn from_repr(discriminant: usize) -> Option<Self> {
+			pub(crate) fn from_repr(discriminant: #repr) -> Option<Self> {
 				#(#constants)*
 				match discriminant {
 					#(#cases)*
