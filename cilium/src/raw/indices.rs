@@ -14,9 +14,9 @@ pub mod metadata_token {
 
 			#[repr(transparent)]
 			#[derive(Copy, Clone, Eq, PartialEq, Hash)]
-			pub struct RawMetadataToken(u32);
+			pub struct MetadataToken(u32);
 
-			impl RawMetadataToken {
+			impl MetadataToken {
 				pub fn kind(&self) -> MetadataTokenKind {
 					let discriminant = (self.0 & 0xFF000000) >> 24;
 					match discriminant {
@@ -25,12 +25,18 @@ pub mod metadata_token {
 					}
 				}
 
+				#[inline]
 				pub fn index(&self) -> usize {
 					(self.0 & 0x00FFFFFF) as usize
 				}
+
+				#[inline]
+				pub fn raw(&self) -> u32 {
+					self.0
+				}
 			}
 
-			impl TryFrom<u32> for RawMetadataToken {
+			impl TryFrom<u32> for MetadataToken {
 				type Error = ();
 				fn try_from(value: u32) -> Result<Self, Self::Error> {
 					let discriminant = (value & 0xFF000000) >> 24;
@@ -41,61 +47,22 @@ pub mod metadata_token {
 				}
 			}
 
-			#[repr(u32)]
-			#[derive(Copy, Clone, Eq, PartialEq, Hash)]
-			pub enum MetadataToken {
-				$($id($id)),*
-			}
-
-			impl Debug for MetadataToken {
-				fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-					match self {
-						$(Self::$id(v) => {
-							write!(f, "MetadataToken::")?;
-							v.fmt(f)
-						}),*
-					}
-				}
-			}
-
-			impl From<RawMetadataToken> for MetadataToken {
-				fn from(value: RawMetadataToken) -> Self {
-					match value.kind() {
-						$(MetadataTokenKind::$id => Self::$id($id((value.0 & 0x00FFFFFF) as usize))),*
-					}
-				}
-			}
-
-			impl From<MetadataToken> for RawMetadataToken {
-				fn from(value: MetadataToken) -> Self {
-					match value {
-						$(MetadataToken::$id(idx) => Self(
-							((MetadataTokenKind::$id as u32) << 24) | idx.0 as u32
-						)),*
-					}
-				}
-			}
-
 			$(
 				#[repr(transparent)]
 				#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-				pub struct $id (usize);
+				pub struct $id(pub usize);
 
-				impl TryFrom<RawMetadataToken> for $id {
-					type Error = ();
-					fn try_from(value: RawMetadataToken) -> Result<Self, Self::Error> {
-						match value.kind() {
-							MetadataTokenKind::$id => Ok(Self(value.index())),
-							_ => Err(()),
-						}
+				impl From<$id> for MetadataToken {
+					fn from(value: $id) -> Self {
+						MetadataToken(((MetadataTokenKind::$id as u32) << 24) | value.0 as u32)
 					}
 				}
 
 				impl TryFrom<MetadataToken> for $id {
 					type Error = ();
 					fn try_from(value: MetadataToken) -> Result<Self, Self::Error> {
-						match value {
-							MetadataToken::$id(idx) => Ok(Self(idx.0)),
+						match value.kind() {
+							MetadataTokenKind::$id => Ok(Self(value.index())),
 							_ => Err(()),
 						}
 					}
@@ -103,19 +70,11 @@ pub mod metadata_token {
 			)*
 		};
 	}
-	impl Debug for RawMetadataToken {
+	impl Debug for MetadataToken {
 		fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-			write!(f, "RawMetadataToken::{:?}(", self.kind())?;
+			write!(f, "MetadataToken::{:?}(", self.kind())?;
 			self.index().fmt(f)?;
 			write!(f, ")")
-		}
-	}
-
-	impl FromByteStream for RawMetadataToken {
-		type Deps = ();
-		fn read(stream: &mut Cursor<&[u8]>, _: &Self::Deps) -> std::io::Result<Self> {
-			let value = u32::read(stream, &())?;
-			RawMetadataToken::try_from(value).map_err(|_| ErrorKind::InvalidData.into())
 		}
 	}
 
@@ -124,14 +83,6 @@ pub mod metadata_token {
 		fn read(stream: &mut Cursor<&[u8]>, _: &Self::Deps) -> std::io::Result<Self> {
 			let value = u32::read(stream, &())?;
 			MetadataToken::try_from(value).map_err(|_| ErrorKind::InvalidData.into())
-		}
-	}
-
-	impl TryFrom<u32> for MetadataToken {
-		type Error = ();
-		fn try_from(value: u32) -> Result<Self, Self::Error> {
-			let raw = RawMetadataToken::try_from(value)?;
-			Ok(MetadataToken::from(raw))
 		}
 	}
 
@@ -178,7 +129,7 @@ pub mod coded_index {
 
 	use crate::raw::heaps::table::TableKind;
 	use std::fmt::{Debug, Formatter};
-	use crate::raw::indices::metadata_token::{MetadataTokenKind, MetadataToken, RawMetadataToken};
+	use crate::raw::indices::metadata_token::{MetadataTokenKind, MetadataToken};
 	use crate::raw::indices::sizes::CodedIndexSizes;
 	use crate::utilities::FromByteStream;
 
@@ -226,19 +177,12 @@ pub mod coded_index {
 					}
 				}
 
-				impl From<$id> for RawMetadataToken {
+				impl From<$id> for MetadataToken {
 					fn from(value: $id) -> Self {
 						const BITS: u32 = CodedIndexKind::$id.mask_bits();
 						let token = CodedIndexKind::$id.token_kind(value.0);
 						let val = ((token as u32) << 24) | value.0 >> BITS;
-						RawMetadataToken::try_from(val).unwrap()
-					}
-				}
-
-				impl From<$id> for MetadataToken {
-					fn from(value: $id) -> Self {
-						let raw: RawMetadataToken = value.into();
-						raw.into()
+						MetadataToken::try_from(val).unwrap()
 					}
 				}
 
@@ -246,7 +190,7 @@ pub mod coded_index {
 					impl From<$id> for crate::raw::indices::metadata_token::$variant {
 						fn from(value: $id) -> Self {
 							use crate::raw::indices::metadata_token::*;
-							let token = RawMetadataToken::from(value);
+							let token = MetadataToken::from(value);
 							$variant::try_from(token).unwrap()
 						}
 					}

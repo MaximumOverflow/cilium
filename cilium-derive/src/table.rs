@@ -68,6 +68,10 @@ pub fn derive(tokens: proc_macro::TokenStream) -> TokenStream {
 			fn read(stream: &mut Cursor<&[u8]>, idx_sizes: &IndexSizes, len: usize) -> std::io::Result<Self> {
 				#read_impl
 			}
+
+			pub fn rows(&self) -> &[#ident] {
+				&self.rows
+			}
 		}
 
 		impl Table for #table {
@@ -81,6 +85,24 @@ pub fn derive(tokens: proc_macro::TokenStream) -> TokenStream {
 
 		#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 		pub struct #index(usize);
+
+		impl #index {
+			#[inline]
+			pub fn new(idx: Option<usize>) -> Self {
+				match idx {
+					None => Self(0),
+					Some(idx) => Self(idx + 1),
+				}
+			}
+
+			#[inline]
+			pub fn idx(&self) -> Option<usize> {
+				match self.0 {
+					0 => None,
+					_ => Some(self.0 - 1),
+				}
+			}
+		}
 
 		impl FromByteStream for #index {
 			type Deps = IndexSizes;

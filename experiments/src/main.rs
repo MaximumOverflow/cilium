@@ -7,6 +7,7 @@ use tracing_flame::FlameLayer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::Registry;
 
+use cilium::Bump;
 use cilium::raw::assembly::Assembly;
 use cilium::raw::FromByteStream;
 use cilium::raw::pe::PEFile;
@@ -31,10 +32,21 @@ fn main() {
 		let mut cursor = Cursor::new(bytes.as_slice());
 		PEFile::read(&mut cursor, &()).unwrap()
 	};
-	let _assembly = Assembly::try_from(pe).unwrap();
+	let raw_assembly = Assembly::try_from(pe).unwrap();
 	println! {
-		"Time: {:?}, RAM: {}MB",
+		"Parsing time: {:?}, RAM: {}MB",
 		start.elapsed().unwrap(),
 		memory_stats().unwrap().virtual_mem as f32 / 1000000.0,
 	}
+
+	let start = SystemTime::now();
+	let bump = Bump::new();
+	let assembly = cilium::schema::assembly::Assembly::from_raw_assembly(&bump, &raw_assembly).unwrap();
+	println! {
+		"Schema time: {:?}, RAM: {}MB",
+		start.elapsed().unwrap(),
+		memory_stats().unwrap().virtual_mem as f32 / 1000000.0,
+	}
+
+	println!("{:#X?}", assembly);
 }

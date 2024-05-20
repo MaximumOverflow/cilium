@@ -1,6 +1,6 @@
+use std::io::{Cursor, Error, ErrorKind, Read};
 use std::any::TypeId;
 use std::fmt::Debug;
-use std::io::{Cursor, Error, ErrorKind, Read};
 use std::sync::Arc;
 
 use bitflags::bitflags;
@@ -36,6 +36,17 @@ impl TableHeap {
 			if Table::type_id(&**table) == TypeId::of::<T>() {
 				let table = table.as_ref() as *const dyn Table as *const T;
 				return Some(unsafe { &*table });
+			}
+		}
+		None
+	}
+	pub fn get_table_arc<T: Table + 'static>(&self) -> Option<Arc<T>> {
+		for table in &self.tables {
+			if Table::type_id(&**table) == TypeId::of::<T>() {
+				unsafe {
+					let ptr = Arc::into_raw(table.clone()) as *const T;
+					return Some(Arc::from_raw(ptr));
+				}
 			}
 		}
 		None

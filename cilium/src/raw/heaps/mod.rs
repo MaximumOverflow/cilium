@@ -8,13 +8,14 @@ pub use crate::raw::heaps::guid::GuidHeap;
 pub use crate::raw::heaps::string::{StringHeap, UserStringHeap};
 
 use crate::raw::heaps::table::TableHeap;
+use crate::raw::indices::metadata_token;
 use crate::raw::indices::sizes::{BlobIndexSize, GuidIndexSize, StringIndexSize};
 use crate::utilities::{FromByteStream, read_string_from_stream_into};
 
 pub mod table;
-mod guid;
-mod string;
-mod blob;
+pub mod guid;
+pub mod string;
+pub mod blob;
 
 #[derive(Debug)]
 pub enum MetadataHeap {
@@ -61,6 +62,20 @@ impl FromByteStream for StringIndex {
 		let mut value = 0usize.to_ne_bytes();
 		stream.read_exact(&mut value[..size.0])?;
 		Ok(Self(usize::from_le_bytes(value)))
+	}
+}
+
+impl From<StringIndex> for metadata_token::String {
+	#[inline]
+	fn from(value: StringIndex) -> Self {
+		Self(value.0)
+	}
+}
+
+impl From<StringIndex> for metadata_token::MetadataToken {
+	#[inline]
+	fn from(value: StringIndex) -> Self {
+		metadata_token::String(value.0).into()
 	}
 }
 

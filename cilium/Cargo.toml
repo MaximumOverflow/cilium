@@ -7,7 +7,10 @@ edition = "2021"
 
 [dependencies]
 uuid = "1.8.0"
+fxhash = "0.2.1"
+bumpalo = "3.16.0"
 bitflags = "2.5.0"
 owning_ref = "0.4.1"
 cilium-derive = { path = "../cilium-derive" }
+memmap2 = { version = "0.9.4", optional = true }
 tracing = { version = "0.1.40", optional = true }

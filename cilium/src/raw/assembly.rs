@@ -6,7 +6,7 @@ use owning_ref::ArcRef;
 
 use crate::raw::heaps::{BlobHeap, GuidHeap, MetadataHeap, StringHeap, UserStringHeap};
 use crate::raw::heaps::table::TableHeap;
-use crate::raw::indices::metadata_token::RawMetadataToken;
+use crate::raw::indices::metadata_token::MetadataToken;
 use crate::raw::pe::{DataDirectory, ImageOptionalHeader, PEFile};
 use crate::utilities::{FromByteStream, impl_from_byte_stream};
 
@@ -18,7 +18,7 @@ pub struct CLIHeader {
 	pub minot_runtime_version: u16,
 	pub metadata: DataDirectory,
 	pub flags: RuntimeFlags,
-	pub entry_point_token: RawMetadataToken,
+	pub entry_point_token: MetadataToken,
 	pub resources: DataDirectory,
 	pub strong_name_signature: u64,
 	pub code_manager_table: u64,

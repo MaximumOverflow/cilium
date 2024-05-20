@@ -1,4 +1,5 @@
 use std::io::{Cursor, Error, ErrorKind, Read, Seek, SeekFrom};
+use crate::raw::heaps::{StringHeap, StringIndex};
 use std::mem::{MaybeUninit, size_of};
 use std::slice::from_raw_parts_mut;
 use std::iter::repeat_with;
@@ -78,6 +79,7 @@ macro_rules! impl_from_byte_stream {
 }
 
 pub(crate) use impl_from_byte_stream;
+use crate::schema::ReadError;
 
 macro_rules! impl_from_le_byte_stream {
     ($($ty: ty),*) => {$(
@@ -129,4 +131,9 @@ pub(crate) fn enumerate_set_bits(mut value: u64) -> impl Iterator<Item = usize> 
 		},
 	})
 	.take_while(|i| *i != usize::MAX)
+}
+
+#[inline]
+pub(crate) fn get_string_from_heap(heap: &StringHeap, idx: StringIndex) -> Result<&str, ReadError> {
+	heap.get(idx).ok_or_else(|| ReadError::InvalidStringToken(idx.into()))
 }
