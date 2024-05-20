@@ -4,6 +4,7 @@ use std::io::Write;
 use crate::raw::heaps::blob::TypeSignatureTag;
 use crate::raw::indices::metadata_token::MetadataToken;
 use crate::schema::heaps::InternedString;
+use crate::schema::method::Method;
 use crate::schema::r#type::private::{get_type_discriminant, TypeDiscriminant, TypePrivate};
 
 pub trait Type<'l>: TypePrivate + Display {
@@ -84,10 +85,11 @@ impl Type<'_> for Primitive {
 
 #[derive(Debug)]
 pub struct Class<'l> {
+	pub(crate) metadata_token: MetadataToken,
 	pub(crate) name: InternedString<'l>,
 	pub(crate) namespace: InternedString<'l>,
 	pub(crate) fields: Vec<Field<'l>>,
-	pub(crate) metadata_token: MetadataToken,
+	pub(crate) methods: Vec<Method<'l>>,
 }
 
 #[derive(Debug)]
@@ -112,6 +114,34 @@ impl<'l> Type<'l> for Class<'l> {
 		buffer[0] = TypeSignatureTag::ClassType as u8;
 		buffer[1..5].copy_from_slice(&self.metadata_token.raw().to_le_bytes());
 		stream.write_all(&buffer)
+	}
+}
+
+#[derive(Debug)]
+pub struct Interface<'l> {
+	pub(crate) metadata_token: MetadataToken,
+	pub(crate) name: InternedString<'l>,
+	pub(crate) namespace: InternedString<'l>,
+	pub(crate) methods: Vec<Method<'l>>,
+}
+
+impl TypePrivate for Interface<'_> {}
+
+impl<'l> Type<'l> for Interface<'l> {
+	fn write_as_blob(&self, stream: &mut dyn Write) -> std::io::Result<()> {
+		let mut buffer = [0u8; 5];
+		buffer[0] = TypeSignatureTag::ClassType as u8;
+		buffer[1..5].copy_from_slice(&self.metadata_token.raw().to_le_bytes());
+		stream.write_all(&buffer)
+	}
+}
+
+impl Display for Interface<'_> {
+	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+		match self.namespace.is_empty() {
+			true => write!(f, "{}", self.name),
+			false => write!(f, "{}.{}", self.namespace, self.name),
+		}
 	}
 }
 

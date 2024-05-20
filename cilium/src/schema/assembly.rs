@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 use std::io::Cursor;
+use std::ops::Range;
 use std::path::Path;
 
 use bumpalo::Bump;
@@ -7,12 +8,13 @@ use bumpalo::Bump;
 use crate::raw::assembly::Assembly as RawAssembly;
 use crate::raw::FromByteStream;
 use crate::raw::heaps::{StringHeap as RawStringHeap};
-use crate::raw::heaps::table::{FieldTable, TableHeap, TypeAttributes, TypeDefTable};
-use crate::raw::indices::metadata_token::TypeDef;
+use crate::raw::heaps::table::{FieldTable, MethodDef, MethodDefTable, TableHeap, TypeAttributes, TypeDefTable};
+use crate::raw::indices::metadata_token;
 use crate::raw::pe::PEFile;
 use crate::schema::errors::ReadError;
 use crate::schema::heaps::StringHeap;
-use crate::schema::r#type::{Class, DebuggableType, Field};
+use crate::schema::method::Method;
+use crate::schema::r#type::{Class, DebuggableType, Field, Interface};
 use crate::utilities::get_string_from_heap;
 
 #[derive(Debug)]
@@ -86,10 +88,17 @@ fn read_types<'l, 'r>(
 
 	if let Some(type_defs) = tables.get_table::<TypeDefTable>() {
 		let type_defs = type_defs.rows();
+
 		let fields = match tables.get_table::<FieldTable>() {
 			Some(fields) => fields.rows(),
 			None if type_defs.iter().all(|t| t.field_list.idx().is_none()) => &[], // Not so sure about this but we'll see
 			None => return Err(ReadError::MissingMetadataTable("Field")),
+		};
+
+		let methods = match tables.get_table::<MethodDefTable>() {
+			Some(fields) => fields.rows(),
+			None if type_defs.iter().all(|t| t.method_list.idx().is_none()) => &[], // Not so sure about this but we'll see
+			None => return Err(ReadError::MissingMetadataTable("MethodDef")),
 		};
 
 		types.reserve(type_defs.len());
@@ -105,6 +114,39 @@ fn read_types<'l, 'r>(
 				}
 			};
 
+			let method_range = match def.method_list.idx() {
+				None => 0..0,
+				Some(idx) => {
+					let end = match type_defs.get(i + 1) {
+						None => fields.len(),
+						Some(def) => def.method_list.idx().unwrap(), // Not so sure about this either but we'll see
+					};
+					idx..end
+				}
+			};
+
+			let methods = read_methods(ReadMethodsDependencies {
+				bump,
+				tables,
+				strings,
+				string_heap,
+				method_defs: methods,
+			}, method_range)?;
+
+			if def.flags.contains(TypeAttributes::INTERFACE) {
+				let name = get_string_from_heap(strings, def.type_name)?;
+				let namespace = get_string_from_heap(strings, def.type_namespace)?;
+
+				types.push(bump.alloc(Interface {
+					name: string_heap.intern(name),
+					namespace: string_heap.intern(namespace),
+					metadata_token: metadata_token::TypeDef(i).into(),
+					methods,
+				}));
+
+				continue;
+			}
+
 			if def.flags.contains(TypeAttributes::CLASS) {
 				let name = get_string_from_heap(strings, def.type_name)?;
 				let namespace = get_string_from_heap(strings, def.type_namespace)?;
@@ -118,18 +160,43 @@ fn read_types<'l, 'r>(
 				}
 
 				types.push(bump.alloc(Class {
+					fields,
+					methods,
 					name: string_heap.intern(name),
 					namespace: string_heap.intern(namespace),
-					fields,
-					metadata_token: TypeDef(i).into(),
+					metadata_token: metadata_token::TypeDef(i).into(),
 				}));
+
 				continue;
-			}
-
-			if def.flags.contains(TypeAttributes::INTERFACE) {
-
 			}
 		}
 	}
 	Ok(types)
+}
+
+struct ReadMethodsDependencies<'l, 'r> {
+	bump: &'l Bump,
+	tables: &'r TableHeap,
+	strings: &'r RawStringHeap,
+	string_heap: &'r mut StringHeap<'l>,
+	method_defs: &'r [MethodDef],
+}
+
+#[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
+fn read_methods<'l, 'r>(
+	ReadMethodsDependencies {
+		strings, string_heap, method_defs, ..
+	}: ReadMethodsDependencies<'l, 'r>,
+	range: Range<usize>,
+) -> Result<Vec<Method<'l>>, ReadError> {
+	let mut methods = Vec::with_capacity(method_defs.len());
+	for i in range {
+		let def = &method_defs[i];
+		let name = get_string_from_heap(strings, def.name)?;
+		methods.push(Method {
+			metadata_token: metadata_token::MethodDef(i),
+			name: string_heap.intern(name),
+		});
+	}
+	Ok(methods)
 }
