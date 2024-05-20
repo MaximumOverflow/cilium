@@ -54,7 +54,7 @@ impl MetadataHeap {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct StringIndex(usize);
+pub struct StringIndex(pub usize);
 
 impl FromByteStream for StringIndex {
 	type Deps = StringIndexSize;
@@ -80,7 +80,7 @@ impl From<StringIndex> for metadata_token::MetadataToken {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct BlobIndex(usize);
+pub struct BlobIndex(pub usize);
 
 impl FromByteStream for BlobIndex {
 	type Deps = BlobIndexSize;
@@ -92,7 +92,7 @@ impl FromByteStream for BlobIndex {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct GuidIndex(usize);
+pub struct GuidIndex(pub usize);
 
 impl FromByteStream for GuidIndex {
 	type Deps = GuidIndexSize;

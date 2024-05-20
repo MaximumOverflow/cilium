@@ -15,17 +15,17 @@ pub(crate) unsafe fn read_pod_from_stream<T: Copy>(stream: &mut impl Read) -> st
 }
 
 #[inline]
-pub(crate) fn read_bytes_slice_from_stream(
-	stream: &mut Cursor<impl AsRef<[u8]>>,
+pub(crate) fn read_bytes_slice_from_stream<'l>(
+	stream: &mut Cursor<&'l [u8]>,
 	count: usize,
-) -> std::io::Result<&[u8]> {
+) -> std::io::Result<&'l [u8]> {
 	let start = stream.position() as usize;
 	let range = start..start + count;
 	if range.len() < count {
 		return Err(Error::from(ErrorKind::UnexpectedEof));
 	}
 	stream.set_position(range.end as u64);
-	Ok(&stream.get_ref().as_ref()[range])
+	Ok(&stream.get_ref()[range])
 }
 
 #[inline(never)]
@@ -104,7 +104,17 @@ impl FromByteStream for u8 {
 	}
 }
 
-impl_from_le_byte_stream!(u16, u32, u64);
+impl FromByteStream for i8 {
+	type Deps = ();
+	#[inline]
+	fn read(stream: &mut Cursor<&[u8]>, _: &Self::Deps) -> std::io::Result<Self> {
+		let mut byte = 0u8;
+		stream.read_exact(std::slice::from_mut(&mut byte))?;
+		Ok(byte as i8)
+	}
+}
+
+impl_from_le_byte_stream!(u16, u32, u64, i16, i32, i64, f32, f64);
 
 impl<const SIZE: usize> FromByteStream for [u8; SIZE] {
 	type Deps = ();

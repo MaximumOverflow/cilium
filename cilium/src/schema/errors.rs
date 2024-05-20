@@ -1,3 +1,4 @@
+use std::error::Error;
 use crate::raw::indices::metadata_token::MetadataToken;
 
 #[derive(Debug)]
@@ -6,7 +7,9 @@ pub enum ReadError {
 	MissingMetadataHeap(&'static str),
 	MissingMetadataTable(&'static str),
 
+	InvalidMethodRVA(u32),
 	InvalidStringToken(MetadataToken),
+	InvalidMethodCode(MetadataToken, Box<dyn Error>),
 
 	#[cfg(feature = "memmap2")]
 	MemMapError(memmap2::Error),

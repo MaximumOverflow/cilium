@@ -1,25 +1,26 @@
 use std::fmt::Debug;
 use std::io::Cursor;
-use std::ops::Range;
 use std::path::Path;
 
 use bumpalo::Bump;
 
 use crate::raw::assembly::Assembly as RawAssembly;
 use crate::raw::FromByteStream;
-use crate::raw::heaps::{StringHeap as RawStringHeap};
-use crate::raw::heaps::table::{FieldTable, MethodDef, MethodDefTable, TableHeap, TypeAttributes, TypeDefTable};
+use crate::raw::heaps::StringHeap as RawStringHeap;
+use crate::raw::heaps::table::{FieldTable, MethodDefTable, TableHeap, TypeAttributes, TypeDefTable};
+use crate::raw::il::{MethodBody as RawMethodBody, OpCodeIterator};
 use crate::raw::indices::metadata_token;
 use crate::raw::pe::PEFile;
 use crate::schema::errors::ReadError;
-use crate::schema::heaps::StringHeap;
-use crate::schema::method::Method;
+use crate::schema::heaps::{BlobHeap, StringHeap};
+use crate::schema::method::{Method, MethodBody};
 use crate::schema::r#type::{Class, DebuggableType, Field, Interface};
 use crate::utilities::get_string_from_heap;
 
 #[derive(Debug)]
 pub struct Assembly<'l> {
 	string_heap: StringHeap<'l>,
+	method_defs: Vec<Method<'l>>,
 	type_defs: Vec<&'l dyn DebuggableType<'l>>,
 }
 
@@ -58,7 +59,9 @@ impl<'l> Assembly<'l> {
 			.get_heap::<RawStringHeap>()
 			.ok_or(ReadError::MissingMetadataHeap("#String"))?;
 
+		let mut blob_heap = BlobHeap::new(bump);
 		let mut string_heap = StringHeap::new(bump);
+
 		let types = read_types(ReadTypesDependencies {
 			bump,
 			tables,
@@ -66,7 +69,16 @@ impl<'l> Assembly<'l> {
 			string_heap: &mut string_heap,
 		})?;
 
-		Ok(Self { string_heap, type_defs: types })
+		let methods = read_methods(ReadMethodsDependencies {
+			bump,
+			pe_file: raw.pe_file(),
+			tables,
+			strings,
+			blob_heap: &mut blob_heap,
+			string_heap: &mut string_heap,
+		})?;
+
+		Ok(Self { string_heap, method_defs: methods, type_defs: types })
 	}
 }
 
@@ -83,7 +95,6 @@ fn read_types<'l, 'r>(
   		bump, tables, strings, string_heap
 	}: ReadTypesDependencies<'l, 'r>
 ) -> Result<Vec<&'l dyn DebuggableType<'l>>, ReadError> {
-
 	let mut types: Vec<&'l dyn DebuggableType<'l>> = vec![];
 
 	if let Some(type_defs) = tables.get_table::<TypeDefTable>() {
@@ -93,12 +104,6 @@ fn read_types<'l, 'r>(
 			Some(fields) => fields.rows(),
 			None if type_defs.iter().all(|t| t.field_list.idx().is_none()) => &[], // Not so sure about this but we'll see
 			None => return Err(ReadError::MissingMetadataTable("Field")),
-		};
-
-		let methods = match tables.get_table::<MethodDefTable>() {
-			Some(fields) => fields.rows(),
-			None if type_defs.iter().all(|t| t.method_list.idx().is_none()) => &[], // Not so sure about this but we'll see
-			None => return Err(ReadError::MissingMetadataTable("MethodDef")),
 		};
 
 		types.reserve(type_defs.len());
@@ -114,25 +119,6 @@ fn read_types<'l, 'r>(
 				}
 			};
 
-			let method_range = match def.method_list.idx() {
-				None => 0..0,
-				Some(idx) => {
-					let end = match type_defs.get(i + 1) {
-						None => fields.len(),
-						Some(def) => def.method_list.idx().unwrap(), // Not so sure about this either but we'll see
-					};
-					idx..end
-				}
-			};
-
-			let methods = read_methods(ReadMethodsDependencies {
-				bump,
-				tables,
-				strings,
-				string_heap,
-				method_defs: methods,
-			}, method_range)?;
-
 			if def.flags.contains(TypeAttributes::INTERFACE) {
 				let name = get_string_from_heap(strings, def.type_name)?;
 				let namespace = get_string_from_heap(strings, def.type_namespace)?;
@@ -140,8 +126,8 @@ fn read_types<'l, 'r>(
 				types.push(bump.alloc(Interface {
 					name: string_heap.intern(name),
 					namespace: string_heap.intern(namespace),
-					metadata_token: metadata_token::TypeDef(i).into(),
-					methods,
+					metadata_token: metadata_token::TypeDef(i + 1).into(),
+					methods: vec![],
 				}));
 
 				continue;
@@ -161,10 +147,10 @@ fn read_types<'l, 'r>(
 
 				types.push(bump.alloc(Class {
 					fields,
-					methods,
+					methods: vec![],
 					name: string_heap.intern(name),
 					namespace: string_heap.intern(namespace),
-					metadata_token: metadata_token::TypeDef(i).into(),
+					metadata_token: metadata_token::TypeDef(i + 1).into(),
 				}));
 
 				continue;
@@ -176,25 +162,53 @@ fn read_types<'l, 'r>(
 
 struct ReadMethodsDependencies<'l, 'r> {
 	bump: &'l Bump,
+	pe_file: &'r PEFile,
 	tables: &'r TableHeap,
 	strings: &'r RawStringHeap,
+	blob_heap: &'r mut BlobHeap<'l>,
 	string_heap: &'r mut StringHeap<'l>,
-	method_defs: &'r [MethodDef],
 }
 
 #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
 fn read_methods<'l, 'r>(
 	ReadMethodsDependencies {
-		strings, string_heap, method_defs, ..
+		pe_file, strings, string_heap, blob_heap, tables, ..
 	}: ReadMethodsDependencies<'l, 'r>,
-	range: Range<usize>,
 ) -> Result<Vec<Method<'l>>, ReadError> {
+	let method_defs = match tables.get_table::<MethodDefTable>() {
+		None => return Ok(vec![]),
+		Some(fields) => fields.rows(),
+	};
+
 	let mut methods = Vec::with_capacity(method_defs.len());
-	for i in range {
-		let def = &method_defs[i];
+	for (i, def) in method_defs.iter().enumerate() {
 		let name = get_string_from_heap(strings, def.name)?;
+		let metadata_token = metadata_token::MethodDef(i + 1);
+		let mut body = None;
+
+		if def.rva != 0 {
+			let Some((_, data, _)) = pe_file.resolve_rva(def.rva) else {
+				return Err(ReadError::InvalidMethodRVA(def.rva))
+			};
+
+			let mut cursor = Cursor::new(data.as_ref());
+			let raw_body = RawMethodBody::read(&mut cursor)?;
+			if let Some(err) = OpCodeIterator::new(raw_body.code).find_map(|(_, v)| v.err()) {
+				return Err(ReadError::InvalidMethodCode(metadata_token.into(), err.into()));
+			}
+
+			body = Some(
+				MethodBody {
+					max_stack_size: raw_body.max_stack_size,
+					init_locals: raw_body.init_locals,
+					code: blob_heap.intern(raw_body.code)
+				}
+			);
+		}
+
 		methods.push(Method {
-			metadata_token: metadata_token::MethodDef(i),
+			body,
+			metadata_token,
 			name: string_heap.intern(name),
 		});
 	}

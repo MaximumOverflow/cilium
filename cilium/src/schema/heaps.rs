@@ -1,10 +1,11 @@
 use crate::raw::indices::metadata_token::{MetadataToken, String as StringToken};
+use std::fmt::{Debug, Display, Formatter};
 use std::collections::HashMap;
 use std::alloc::Layout;
-use std::fmt::{Debug, Display, Formatter};
+use fxhash::FxHashMap;
 use std::ops::Deref;
 use bumpalo::Bump;
-use fxhash::FxHashMap;
+use crate::raw::heaps::BlobIndex;
 
 pub(crate) struct StringHeap<'l> {
 	bump: &'l Bump,
@@ -85,6 +86,84 @@ impl Display for InternedString<'_> {
 impl InternedString<'_> {
 	#[inline]
 	pub fn metadata_token(&self) -> MetadataToken {
+		self.1
+	}
+}
+
+pub(crate) struct BlobHeap<'l> {
+	bump: &'l Bump,
+	offset: usize,
+	vec: Vec<InternedBlob<'l>>,
+	map: FxHashMap<&'l [u8], usize>,
+}
+
+impl<'l> BlobHeap<'l> {
+	pub fn new(bump: &'l Bump) -> Self {
+		Self {
+			bump,
+			offset: 0,
+			vec: vec![],
+			map: HashMap::default(),
+		}
+	}
+
+	pub fn intern(&mut self, blob: &[u8]) -> InternedBlob<'l> {
+		if let Some(idx) = self.map.get(blob) {
+			return self.vec[*idx];
+		}
+
+		let (interned, offset) = { // Allocate str + zero termination character
+			let interned = self.bump.alloc_slice_copy(blob);
+			let new_offset = self.offset + blob.len();
+			let offset = std::mem::replace(&mut self.offset, new_offset);
+			(interned, offset)
+		};
+
+		let idx = self.vec.len();
+		let blob = InternedBlob(interned, BlobIndex(offset).into());
+		self.vec.push(blob);
+		self.map.insert(interned, idx);
+		blob
+	}
+}
+
+impl Debug for BlobHeap<'_> {
+	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+		use std::fmt::Write;
+		let mut dbg = f.debug_struct("BlobHeap");
+		let mut name = String::new();
+		for blob in &self.vec {
+			name.clear();
+			write!(name, "{:X}", blob.1.0)?;
+			dbg.field(&name, &blob.0);
+		}
+		dbg.finish()
+	}
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Hash)]
+pub struct InternedBlob<'l>(&'l [u8], BlobIndex);
+
+impl Deref for InternedBlob<'_> {
+	type Target = [u8];
+	#[inline]
+	fn deref(&self) -> &Self::Target {
+		self.0
+	}
+}
+
+impl Debug for InternedBlob<'_> {
+	#[inline]
+	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+		write!(f, "[u8; ")?;
+		Debug::fmt(&self.0.len(), f)?;
+		write!(f, "]")
+	}
+}
+
+impl InternedBlob<'_> {
+	#[inline]
+	pub fn index(&self) -> BlobIndex {
 		self.1
 	}
 }

@@ -9,11 +9,7 @@ use owning_ref::ArcRef;
 use cilium_derive::{FromRepr, Table};
 
 use crate::raw::heaps::{BlobIndex, GuidIndex, StringIndex};
-use crate::raw::indices::coded_index::{
-	CustomAttributeType, HasConstant, HasCustomAttribute, HasFieldMarshal, HasSemantics,
-	Implementation, MemberForwarded, MemberRefParent, MethodDefOrRef, TypeDefOrRef,
-	TypeOrMethodDef,
-};
+use crate::raw::indices::coded_index::{CustomAttributeType, HasConstant, HasCustomAttribute, HasDeclSecurity, HasFieldMarshal, HasSemantics, Implementation, MemberForwarded, MemberRefParent, MethodDefOrRef, ResolutionScope, TypeDefOrRef, TypeOrMethodDef};
 use crate::raw::indices::sizes::*;
 use crate::utilities::{enumerate_set_bits, FromByteStream, impl_from_byte_stream};
 
@@ -101,7 +97,7 @@ impl TryFrom<ArcRef<[u8]>> for TableHeap {
 			#[rustfmt::skip]
 			tables.push(match kind {
 				TableKind::Module => 				 Arc::new(ModuleTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::TypeRef => 				 todo!("Unimplemented table TypeRef"),
+				TableKind::TypeRef => 				 Arc::new(TypeRefTable::read(&mut stream, &idx_sizes, len)?),
 				TableKind::TypeDef => 				 Arc::new(TypeDefTable::read(&mut stream, &idx_sizes, len)?),
 				TableKind::FieldPtr => 				 todo!("Unimplemented table FieldPtr"),
 				TableKind::Field => 				 Arc::new(FieldTable::read(&mut stream, &idx_sizes, len)?),
@@ -114,7 +110,7 @@ impl TryFrom<ArcRef<[u8]>> for TableHeap {
 				TableKind::Constant => 				 Arc::new(ConstantTable::read(&mut stream, &idx_sizes, len)?),
 				TableKind::CustomAttribute => 		 Arc::new(CustomAttributeTable::read(&mut stream, &idx_sizes, len)?),
 				TableKind::FieldMarshal => 			 Arc::new(FieldMarshalTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::DeclSecurity => 			 todo!("Unimplemented table DeclSecurity"),
+				TableKind::DeclSecurity => 			 Arc::new(DeclSecurityTable::read(&mut stream, &idx_sizes, len)?),
 				TableKind::ClassLayout => 			 Arc::new(ClassLayoutTable::read(&mut stream, &idx_sizes, len)?),
 				TableKind::FieldLayout => 			 Arc::new(FieldLayoutTable::read(&mut stream, &idx_sizes, len)?),
 				TableKind::StandAloneSig => 		 Arc::new(StandAloneSigTable::read(&mut stream, &idx_sizes, len)?),
@@ -135,7 +131,7 @@ impl TryFrom<ArcRef<[u8]>> for TableHeap {
 				TableKind::Assembly => 				 Arc::new(AssemblyTable::read(&mut stream, &idx_sizes, len)?),
 				TableKind::AssemblyProcessor => 	 todo!("Unimplemented table AssemblyProcessor"),
 				TableKind::AssemblyOS => 			 todo!("Unimplemented table AssemblyOS"),
-				TableKind::AssemblyRef => 			 todo!("Unimplemented table AssemblyRef"),
+				TableKind::AssemblyRef => 			 Arc::new(AssemblyRefTable::read(&mut stream, &idx_sizes, len)?),
 				TableKind::AssemblyRefProcessor => 	 todo!("Unimplemented table AssemblyRefProcessor"),
 				TableKind::AssemblyRefOS => 		 todo!("Unimplemented table AssemblyRefOS"),
 				TableKind::File => 					 todo!("Unimplemented table File"),
@@ -335,6 +331,13 @@ pub struct TypeDef {
 	pub method_list: MethodDefIndex,
 }
 
+#[derive(Debug, Clone, Table)]
+pub struct TypeRef {
+	pub resolution_scope: ResolutionScope,
+	pub type_name: StringIndex,
+	pub type_namespace: StringIndex,
+}
+
 bitflags! {
 	#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 	pub struct FieldAttributes: u16 {
@@ -463,6 +466,13 @@ pub struct CustomAttribute {
 pub struct FieldMarshal {
 	pub parent: HasFieldMarshal,
 	pub native_type: BlobIndex,
+}
+
+#[derive(Debug, Clone, Table)]
+pub struct DeclSecurity {
+	action: u16, // TODO
+	parent: HasDeclSecurity,
+	permission_set: BlobIndex,
 }
 
 #[derive(Debug, Clone, Table)]
@@ -623,6 +633,19 @@ pub struct Assembly {
 	pub public_key: BlobIndex,
 	pub name: StringIndex,
 	pub culture: StringIndex,
+}
+
+#[derive(Debug, Clone, Table)]
+pub struct AssemblyRef {
+	pub major_version: u16,
+	pub minor_version: u16,
+	pub build_number: u16,
+	pub revision_number: u16,
+	pub flags: AssemblyFlags,
+	pub public_key: BlobIndex,
+	pub name: StringIndex,
+	pub culture: StringIndex,
+	pub hash_value: BlobIndex,
 }
 
 bitflags! {
