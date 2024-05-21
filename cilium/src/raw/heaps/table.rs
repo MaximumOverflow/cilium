@@ -18,6 +18,7 @@ pub struct TableHeap {
 	major_version: u8,
 	minor_version: u8,
 	tables: Vec<Arc<dyn Table>>,
+	index_sizes: Arc<IndexSizes>,
 }
 
 impl TableHeap {
@@ -46,6 +47,9 @@ impl TableHeap {
 			}
 		}
 		None
+	}
+	pub(crate) fn index_sizes(&self) -> &Arc<IndexSizes> {
+		&self.index_sizes
 	}
 }
 
@@ -77,7 +81,7 @@ impl TryFrom<ArcRef<[u8]>> for TableHeap {
 		} = Header::read(&mut stream, &())?;
 
 		let table_count = valid.count_ones() as usize;
-		let mut table_sizes = vec![0u32; 64];
+		let mut table_sizes = vec![0u32; 55];
 
 		for i in enumerate_set_bits(valid) {
 			let mut bytes = 0u32.to_ne_bytes();
@@ -156,6 +160,7 @@ impl TryFrom<ArcRef<[u8]>> for TableHeap {
 			major_version,
 			minor_version,
 			tables,
+			index_sizes: idx_sizes,
 		})
 	}
 }

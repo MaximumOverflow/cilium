@@ -1,7 +1,6 @@
 use std::fmt::{Debug, Display, Formatter};
 use std::io::Write;
 
-use crate::raw::heaps::blob::TypeSignatureTag;
 use crate::raw::indices::metadata_token::MetadataToken;
 use crate::schema::heaps::InternedString;
 use crate::schema::method::Method;
@@ -111,7 +110,7 @@ impl TypePrivate for Class<'_> {}
 impl<'l> Type<'l> for Class<'l> {
 	fn write_as_blob(&self, stream: &mut dyn Write) -> std::io::Result<()> {
 		let mut buffer = [0u8; 5];
-		buffer[0] = TypeSignatureTag::ClassType as u8;
+		buffer[0] = 0x15;
 		buffer[1..5].copy_from_slice(&self.metadata_token.raw().to_le_bytes());
 		stream.write_all(&buffer)
 	}
@@ -130,7 +129,7 @@ impl TypePrivate for Interface<'_> {}
 impl<'l> Type<'l> for Interface<'l> {
 	fn write_as_blob(&self, stream: &mut dyn Write) -> std::io::Result<()> {
 		let mut buffer = [0u8; 5];
-		buffer[0] = TypeSignatureTag::ClassType as u8;
+		buffer[0] = 0x15;
 		buffer[1..5].copy_from_slice(&self.metadata_token.raw().to_le_bytes());
 		stream.write_all(&buffer)
 	}

@@ -1,13 +1,18 @@
-use std::io::{Cursor, Error, ErrorKind, Read};
 use std::fmt::{Debug, Formatter};
-use bitflags::bitflags;
+use std::io::{Cursor, Error, ErrorKind, Read};
 use std::io::Result;
+use std::sync::Arc;
 
+use bitflags::bitflags;
 use derivative::Derivative;
 
 use crate::raw::FromByteStream;
-use crate::raw::indices::metadata_token::MetadataToken;
-use crate::utilities::{impl_from_byte_stream, read_bytes_slice_from_stream};
+use crate::raw::heaps::BlobHeap;
+use crate::raw::heaps::table::StandAloneSigTable;
+use crate::raw::indices::coded_index::TypeDefOrRef;
+use crate::raw::indices::metadata_token::{MetadataToken, StandAloneSig};
+use crate::raw::indices::sizes::IndexSizes;
+use crate::utilities::{impl_from_byte_stream, read_bytes_slice_from_stream, read_compressed_u32};
 
 macro_rules! debug_opcode {
 	($name: ident, $f: expr, $self: expr, $ident: ident) => {
@@ -55,7 +60,7 @@ macro_rules! define_opcodes {
 
 		impl $(<$lifetime>)? Debug for $name $(<$lifetime>)? {
 			fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-				$(debug_opcode!($name, f, self, $ident $(($ty))?);)*
+				$(debug_opcode! { $name, f, self, $ident $(($ty))? })*
 				Ok(())
 			}
 		}
@@ -580,23 +585,29 @@ impl<'l> Iterator for OpCodeIterator<'l> {
 	}
 }
 
-#[derive(Copy, Clone, Derivative)]
+#[derive(Derivative)]
 #[derivative(Debug)]
 pub struct MethodBody<'l> {
 	pub max_stack_size: u16,
 	pub init_locals: bool,
+	pub locals: Vec<TypeSignature<'l>>,
 	#[derivative(Debug(format_with="debug_opcodes"))]
 	pub code: &'l [u8],
 }
 
 impl<'l> MethodBody<'l> {
-	pub fn read(stream: &mut Cursor<&'l [u8]>) -> Result<Self> {
+	pub fn read(
+		stream: &mut Cursor<&'l [u8]>,
+		blob_heap: &'l BlobHeap,
+		signatures: &StandAloneSigTable,
+		index_sizes: &Arc<IndexSizes>,
+	) -> Result<Self> {
 		let header = u8::read(stream, &())?;
 		match header & 3 {
 			2 => {
 				let code_size = (header >> 2) as usize;
 				let code = read_bytes_slice_from_stream(stream, code_size)?;
-				Ok(Self { code, max_stack_size: 8, init_locals: false })
+				Ok(Self { code, max_stack_size: 8, init_locals: false, locals: vec![] })
 			}
 			3 => {
 				stream.set_position(stream.position() - 1);
@@ -605,20 +616,40 @@ impl<'l> MethodBody<'l> {
 				let code_size = u32::read(stream, &())?;
 				let init_locals = flags & 0x10 != 0;
 
-				//TODO read variables
+				let mut locals = vec![];
 				let local_var_token = u32::read(stream, &())?;
-				let Ok(_local_var_token) = MetadataToken::try_from(local_var_token) else {
-					return Err(ErrorKind::InvalidData.into());
-				};
-				// let Ok(LocalVariable(_local_var_token)) = local_var_token.try_into() else {
-				// 	return Err(ErrorKind::InvalidData.into());
-				// };
+				if local_var_token != 0 {
+					let Ok(local_var_token) = MetadataToken::try_from(local_var_token) else {
+						return Err(Error::new(ErrorKind::InvalidData, "Invalid metadata token"));
+					};
+					let Ok(StandAloneSig(local_var_token)) = local_var_token.try_into() else {
+						return Err(Error::new(ErrorKind::InvalidData, "Invalid metadata token"));
+					};
+					let sig = signatures.rows()[local_var_token - 1].signature;
+					let Some(sig) = blob_heap.get(sig) else {
+						return Err(Error::new(ErrorKind::InvalidData, "Invalid blob index"));
+					};
+
+					let mut stream = Cursor::new(sig);
+					if u8::read(&mut stream, &())? != 0x07 {
+						return Err(Error::new(ErrorKind::InvalidData, "Blob is not a local signature"));
+					}
+
+					let count = read_compressed_u32(&mut stream)? as usize;
+
+					locals.reserve_exact(count);
+					for i in 0..count {
+						let signature = TypeSignature::read(&mut stream, index_sizes)?;
+						locals.push(signature);
+					}
+				}
+
 
 				let code = read_bytes_slice_from_stream(stream, code_size as usize)?;
 
 				// TODO read section
 
-				Ok(Self { max_stack_size, init_locals, code, })
+				Ok(Self { max_stack_size, init_locals, code, locals })
 			},
 			_ => return Err(Error::new(ErrorKind::InvalidData, "Invalid method header")),
 		}
@@ -632,4 +663,252 @@ pub(crate) fn debug_opcodes(bytes: &[u8], fmt: &mut Formatter) -> std::result::R
 		dbg.entry(&format_args!("IL_{i:08X}\t{opcode:X?}"));
 	}
 	dbg.finish()
+}
+
+#[derive(Clone)]
+pub struct TypeSignature<'l>(&'l [u8], Arc<IndexSizes>);
+
+impl Debug for TypeSignature<'_> {
+	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+		let mut stream = Cursor::new(self.0);
+		let sig = TypeSignatureTag::read(&mut stream, &self.1).unwrap();
+		Debug::fmt(&sig, f)
+	}
+}
+
+impl<'l> TypeSignature<'l> {
+	pub fn read(stream: &mut Cursor<&'l [u8]>, index_sizes: &Arc<IndexSizes>) -> Result<Self> {
+		let start = stream.position() as usize;
+		let _ = TypeSignatureTag::read(stream, index_sizes)?;
+		Ok(Self(&stream.get_ref()[start..stream.position() as usize], index_sizes.clone()))
+	}
+}
+
+/// These are used extensively in metadata signature blobs.
+#[repr(u8)]
+#[derive(Debug)]
+pub enum TypeSignatureTag<'l> {
+	/// Marks end of a list.
+	End = 0x00,
+	Void = 0x01,
+	Bool = 0x02,
+	Char = 0x03,
+	Int1 = 0x04,
+	UInt1 = 0x05,
+	Int2 = 0x06,
+	UInt2 = 0x07,
+	Int4 = 0x08,
+	UInt4 = 0x09,
+	Int8 = 0x0a,
+	UInt8 = 0x0b,
+	Float = 0x0c,
+	Double = 0x0d,
+	String = 0x0e,
+	/// Followed by type.
+	Pointer(TypeSignature<'l>) = 0x0f,
+	/// Followed by type.
+	Reference(TypeSignature<'l>) = 0x10,
+	/// Followed by TypeDef or TypeRef token.
+	ValueType(TypeDefOrRef) = 0x11,
+	/// Followed by TypeDef or TypeRef token.
+	ClassType(TypeDefOrRef) = 0x12,
+	/// Generic parameter in a generic type definition, represented as number (compressed unsigned integer).
+	GenericParam(u32) = 0x13,
+	/// Followed by: type, rank, boundsCount, \[bounds...], loCount, \[lo...].
+	Array = 0x14,
+	/// Generic type instantiation. Followed by type type-arg-count type-1 ... type-n.
+	GenericInst(GenericInst<'l>) = 0x15,
+	/// Undocumented
+	TypedByRef = 0x16,
+	/// System.IntPtr.
+	IntPtr = 0x18,
+	/// System.UIntPtr.
+	UIntPtr = 0x19,
+	/// Followed by full method signature.
+	FnPointer(MethodSignature<'l>) = 0x1b,
+	/// System.Object.
+	Object = 0x1c,
+	/// Single-dim array with 0 lower bound.
+	SzArray(TypeSignature<'l>) = 0x1d,
+	/// Generic parameter in a generic method definition, represented as number (compressed unsigned integer).
+	MethodGenericParam(u32) = 0x1e,
+	/// Required modifier : followed by a TypeDef or TypeRef token.
+	CModReq = 0x1f,
+	/// Optional modifier : followed by a TypeDef or TypeRef token.
+	CModOpt(TypeDefOrRef) = 0x20,
+	/// Implemented within the CLI.
+	Internal = 0x21,
+	/// Or’d with following element types.
+	Mod = 0x40,
+	/// Sentinel for vararg method signature.
+	Sentinel = 0x41,
+	/// Denotes a local variable that points at a pinned object.
+	Pinned(TypeSignature<'l>) = 0x45,
+	/// Indicates an argument of type System.Type.
+	Type = 0x50,
+	/// Used in custom attributes to specify a boxed object.
+	CAttrBoxed = 0x51,
+	/// Used in custom attributes to indicate a FIELD.
+	CAttrFld = 0x53,
+	/// Used in custom attributes to indicate a PROPERTY.
+	CAttrProp = 0x54,
+	/// Used in custom attributes to specify an enum.
+	CAttrEnum = 0x55,
+}
+
+impl<'l> TypeSignatureTag<'l> {
+	pub fn read(stream: &mut Cursor<&'l [u8]>, index_sizes: &Arc<IndexSizes>) -> Result<Self> {
+		let tag = u8::read(stream, &())?;
+		match tag {
+			0x00 => Ok(TypeSignatureTag::End),
+			0x01 => Ok(TypeSignatureTag::Void),
+			0x02 => Ok(TypeSignatureTag::Bool),
+			0x03 => Ok(TypeSignatureTag::Char),
+			0x04 => Ok(TypeSignatureTag::Int1),
+			0x05 => Ok(TypeSignatureTag::UInt2),
+			0x06 => Ok(TypeSignatureTag::Int2),
+			0x07 => Ok(TypeSignatureTag::UInt2),
+			0x08 => Ok(TypeSignatureTag::Int4),
+			0x09 => Ok(TypeSignatureTag::UInt4),
+			0x0A => Ok(TypeSignatureTag::Int8),
+			0x0B => Ok(TypeSignatureTag::UInt8),
+			0x0C => Ok(TypeSignatureTag::Float),
+			0x0D => Ok(TypeSignatureTag::Double),
+			0x0E => Ok(TypeSignatureTag::String),
+			0x0F => Ok(TypeSignatureTag::Pointer(TypeSignature::read(stream, index_sizes)?)),
+			0x10 => Ok(TypeSignatureTag::Reference(TypeSignature::read(stream, index_sizes)?)),
+			0x11 => Ok(TypeSignatureTag::ValueType(TypeDefOrRef::read_compressed(stream)?)),
+			0x12 => Ok(TypeSignatureTag::ClassType(TypeDefOrRef::read_compressed(stream)?)),
+			0x13 => Ok(TypeSignatureTag::GenericParam(read_compressed_u32(stream)?)),
+			0x15 => Ok(TypeSignatureTag::GenericInst(GenericInst::read(stream, index_sizes)?)),
+			0x16 => Ok(TypeSignatureTag::TypedByRef),
+			0x18 => Ok(TypeSignatureTag::IntPtr),
+			0x19 => Ok(TypeSignatureTag::UIntPtr),
+			0x1B => Ok(TypeSignatureTag::FnPointer(MethodSignature::read(stream, index_sizes)?)),
+			0x1C => Ok(TypeSignatureTag::Object),
+			0x1D => Ok(TypeSignatureTag::SzArray(TypeSignature::read(stream, index_sizes)?)),
+			0x1E => Ok(TypeSignatureTag::MethodGenericParam(read_compressed_u32(stream)?)),
+			0x20 => Ok(TypeSignatureTag::CModOpt(TypeDefOrRef::read_compressed(stream)?)),
+			0x45 => Ok(TypeSignatureTag::Pinned(TypeSignature::read(stream, index_sizes)?)),
+			_ => unimplemented!("Unimplemented TypeSignature tag {:#X?}", tag),
+		}
+	}
+}
+
+pub struct GenericInst<'l>(TypeSignature<'l>, TypeSignatureSequence<'l>);
+
+impl<'l> GenericInst<'l> {
+	pub fn read(stream: &mut Cursor<&'l [u8]>, index_sizes: &Arc<IndexSizes>) -> Result<Self> {
+		let ty = TypeSignature::read(stream, index_sizes)?;
+		let seq = TypeSignatureSequence::read(stream, index_sizes)?;
+		Ok(Self(ty, seq))
+	}
+
+	pub fn params(&self) -> impl Iterator<Item=TypeSignatureTag<'l>> + '_ {
+		self.1.signatures()
+	}
+
+	#[inline]
+	pub fn params_count(&self) -> usize {
+		self.1.len()
+	}
+}
+
+impl<'l> Debug for GenericInst<'l> {
+	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+		let mut dbg = f.debug_struct("GenericInst");
+		dbg.field("ty", &self.0);
+		dbg.field("params", &self.1);
+		dbg.finish()
+	}
+}
+
+pub struct TypeSignatureSequence<'l>(u32, &'l [u8], Arc<IndexSizes>);
+
+impl<'l> TypeSignatureSequence<'l> {
+	#[inline]
+	pub fn len(&self) -> usize {
+		self.0 as usize
+	}
+
+	#[inline]
+	pub fn is_empty(&self) -> bool {
+		self.0 == 0
+	}
+
+	pub fn signatures(&self) -> impl Iterator<Item=TypeSignatureTag<'l>> + '_ {
+		let mut stream = Cursor::new(self.1);
+		(0..self.0).map(move |_| TypeSignatureTag::read(&mut stream, &self.2).unwrap())
+	}
+
+	pub fn read(stream: &mut Cursor<&'l [u8]>, index_sizes: &Arc<IndexSizes>) -> Result<Self> {
+		let count = read_compressed_u32(stream)?;
+		Self::read_n(stream, index_sizes, count)
+	}
+
+	pub fn read_n(stream: &mut Cursor<&'l [u8]>, index_sizes: &Arc<IndexSizes>, count: u32) -> Result<Self> {
+		let start = stream.position() as usize;
+		for _ in 0..count {
+			let _ = TypeSignature::read(stream, index_sizes)?;
+		}
+		let end = stream.position() as usize;
+		Ok(Self(count, &stream.get_ref()[start..end], index_sizes.clone()))
+	}
+}
+
+impl Debug for TypeSignatureSequence<'_> {
+	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+		let mut dbg = f.debug_list();
+		for sig in self.signatures() {
+			dbg.entry(&sig);
+		}
+		dbg.finish()
+	}
+}
+
+bitflags! {
+	#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+	pub struct CallingConvention: u8 {
+		const DEFAULT = 0x0;
+		const C	= 0x1;
+		const STD_CALL = 0x2;
+		const THIS_CALL = 0x3;
+		const FAST_CALL = 0x4;
+		const VAR_ARG = 0x5;
+		const UNMANAGED = 0x9;
+		const GENERIC = 0x10;
+		const HAS_THIS = 0x20;
+		const EXPLICIT_THIS = 0x40;
+	}
+}
+
+impl_from_byte_stream!(CallingConvention);
+
+#[derive(Debug)]
+pub struct MethodSignature<'l> {
+	calling_convention: CallingConvention,
+	return_type: TypeSignature<'l>,
+	parameter_types: TypeSignatureSequence<'l>,
+}
+
+impl<'l> MethodSignature<'l> {
+	pub fn read(stream: &mut Cursor<&'l [u8]>, index_sizes: &Arc<IndexSizes>) -> Result<Self> {
+		let calling_convention = CallingConvention::read(stream, &())?;
+
+		if calling_convention.contains(CallingConvention::GENERIC) {
+			let _count = read_compressed_u32(stream)?;
+			// TODO handle generic call
+		}
+
+		let param_count = read_compressed_u32(stream)?;
+		let return_type = TypeSignature::read(stream, index_sizes)?;
+
+		Ok(
+			Self {
+				calling_convention,
+				return_type,
+				parameter_types: TypeSignatureSequence::read_n(stream, index_sizes, param_count)?,
+			}
+		)
+	}
 }

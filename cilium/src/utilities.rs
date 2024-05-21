@@ -147,3 +147,39 @@ pub(crate) fn enumerate_set_bits(mut value: u64) -> impl Iterator<Item = usize> 
 pub(crate) fn get_string_from_heap(heap: &StringHeap, idx: StringIndex) -> Result<&str, ReadError> {
 	heap.get(idx).ok_or_else(|| ReadError::InvalidStringToken(idx.into()))
 }
+
+// pub(crate) fn read_compressed_u32(stream: &mut Cursor<&[u8]>) -> Result<u32, Error> {
+// 	let first = u8::read(stream, &())?;
+// 	if first & 0x80 == 0 {
+// 		return Ok(first as u32);
+// 	}
+//
+// 	if first & 0x40 == 0 {
+// 		let first = ((first & !0x80) as u32).overflowing_shl(8).0;
+// 		let second = u8::read(stream, &())? as u32;
+// 		return Ok(first | second);
+// 	}
+//
+// 	let first = ((first & !0xc0) as u32).overflowing_shl(24).0;
+// 	let second = (u8::read(stream, &())? as u32).overflowing_shl(16).0;
+// 	let third = (u8::read(stream, &())? as u32).overflowing_shl(8).0;
+// 	let fourth = u8::read(stream, &())? as u32;
+//
+// 	Ok(first | second | third | fourth)
+// }
+
+pub(crate) fn read_compressed_u32(stream: &mut Cursor<&[u8]>) -> Result<u32, Error> {
+	let byte_0 = u8::read(stream, &())?;
+	if byte_0 & 0x80 == 0 {
+		Ok((byte_0 & 0x7F) as u32)
+	} else if byte_0 & 0xC0 == 0x80 {
+		let byte_1 = u8::read(stream, &())?;
+		Ok((((byte_0 & 0x3F) as u32) << 8) + byte_1 as u32)
+	} else if byte_0 & 0xE0 == 0xC0 {
+		let byte_1 = u8::read(stream, &())?;
+		let byte_2 = u8::read(stream, &())?;
+		Ok((((byte_0 & 0x3F) as u32) << 16) + ((byte_1 as u32) << 8) + byte_2 as u32)
+	} else {
+		return Err(Error::new(ErrorKind::InvalidData, format!("Invalid compressed u32 header {:#X}", byte_0)));
+	}
+}

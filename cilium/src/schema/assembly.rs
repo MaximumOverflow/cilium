@@ -6,8 +6,8 @@ use bumpalo::Bump;
 
 use crate::raw::assembly::Assembly as RawAssembly;
 use crate::raw::FromByteStream;
-use crate::raw::heaps::StringHeap as RawStringHeap;
-use crate::raw::heaps::table::{FieldTable, MethodDefTable, TableHeap, TypeAttributes, TypeDefTable};
+use crate::raw::heaps::{StringHeap as RawStringHeap, BlobHeap as RawBlobHeap};
+use crate::raw::heaps::table::{FieldTable, MethodDefTable, StandAloneSigTable, TableHeap, TypeAttributes, TypeDefTable};
 use crate::raw::il::{MethodBody as RawMethodBody, OpCodeIterator};
 use crate::raw::indices::metadata_token;
 use crate::raw::pe::PEFile;
@@ -54,6 +54,11 @@ impl<'l> Assembly<'l> {
 			.get_heap::<TableHeap>()
 			.ok_or(ReadError::MissingMetadataHeap("#~"))?;
 
+		let blobs = raw
+			.metadata_root()
+			.get_heap::<RawBlobHeap>()
+			.ok_or(ReadError::MissingMetadataHeap("#Blob"))?;
+
 		let strings = raw
 			.metadata_root()
 			.get_heap::<RawStringHeap>()
@@ -73,6 +78,7 @@ impl<'l> Assembly<'l> {
 			bump,
 			pe_file: raw.pe_file(),
 			tables,
+			blobs,
 			strings,
 			blob_heap: &mut blob_heap,
 			string_heap: &mut string_heap,
@@ -164,6 +170,7 @@ struct ReadMethodsDependencies<'l, 'r> {
 	bump: &'l Bump,
 	pe_file: &'r PEFile,
 	tables: &'r TableHeap,
+	blobs: &'r RawBlobHeap,
 	strings: &'r RawStringHeap,
 	blob_heap: &'r mut BlobHeap<'l>,
 	string_heap: &'r mut StringHeap<'l>,
@@ -172,12 +179,17 @@ struct ReadMethodsDependencies<'l, 'r> {
 #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
 fn read_methods<'l, 'r>(
 	ReadMethodsDependencies {
-		pe_file, strings, string_heap, blob_heap, tables, ..
+		pe_file, blobs, strings, string_heap, blob_heap, tables, ..
 	}: ReadMethodsDependencies<'l, 'r>,
 ) -> Result<Vec<Method<'l>>, ReadError> {
 	let method_defs = match tables.get_table::<MethodDefTable>() {
 		None => return Ok(vec![]),
 		Some(fields) => fields.rows(),
+	};
+
+	let signatures = match tables.get_table::<StandAloneSigTable>() {
+		Some(fields) => fields,
+		None => return Err(ReadError::MissingMetadataTable("StandAloneSig")),
 	};
 
 	let mut methods = Vec::with_capacity(method_defs.len());
@@ -192,10 +204,12 @@ fn read_methods<'l, 'r>(
 			};
 
 			let mut cursor = Cursor::new(data.as_ref());
-			let raw_body = RawMethodBody::read(&mut cursor)?;
+			let raw_body = RawMethodBody::read(&mut cursor, blobs, signatures, tables.index_sizes())?;
 			if let Some(err) = OpCodeIterator::new(raw_body.code).find_map(|(_, v)| v.err()) {
 				return Err(ReadError::InvalidMethodCode(metadata_token.into(), err.into()));
 			}
+
+			println!("{}: {:#X?}", name, raw_body);
 
 			body = Some(
 				MethodBody {

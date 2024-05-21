@@ -48,5 +48,5 @@ fn main() {
 		memory_stats().unwrap().virtual_mem as f32 / 1000000.0,
 	}
 
-	println!("{:#X?}", assembly);
+	// println!("{:#X?}", assembly);
 }

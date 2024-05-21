@@ -131,7 +131,7 @@ pub mod coded_index {
 	use std::fmt::{Debug, Formatter};
 	use crate::raw::indices::metadata_token::{MetadataTokenKind, MetadataToken};
 	use crate::raw::indices::sizes::CodedIndexSizes;
-	use crate::utilities::FromByteStream;
+	use crate::utilities::{FromByteStream, read_compressed_u32};
 
 	macro_rules! define_coded_index {
 		($($id: ident: [$($variant: ident),*]),*) => {
@@ -173,6 +173,13 @@ pub mod coded_index {
 						let mut bytes = 0u32.to_ne_bytes();
 						stream.read_exact(&mut bytes[..size])?;
 						let value = u32::from_le_bytes(bytes);
+						Self::try_from(value).map_err(|_| ErrorKind::InvalidData.into())
+					}
+				}
+
+				impl $id {
+					pub fn read_compressed(stream: &mut Cursor<&[u8]>) -> std::io::Result<Self> {
+						let value = read_compressed_u32(stream)?;
 						Self::try_from(value).map_err(|_| ErrorKind::InvalidData.into())
 					}
 				}
@@ -231,7 +238,7 @@ pub mod coded_index {
 	}
 
 	impl CodedIndexKind {
-		pub const fn get_size(&self, table_sizes: &[u32; 64]) -> usize {
+		pub const fn get_size(&self, table_sizes: &[u32; 55]) -> usize {
 			let mut i = 0;
 			let mut max = 0;
 			let bits = self.mask_bits();
@@ -298,45 +305,53 @@ pub mod coded_index {
 }
 
 pub(crate) mod sizes {
-	use std::alloc::Layout;
+	use std::sync::Arc;
 
 	use crate::raw::indices::coded_index::CodedIndexKind;
 
+	#[derive(Debug)]
 	pub struct IndexSizes {
-		guid: GuidIndexSize,
-		blob: BlobIndexSize,
-		string: StringIndexSize,
-		coded: CodedIndexSizes,
-		tables: TableIndexSizes,
+		pub guid: GuidIndexSize,
+		pub blob: BlobIndexSize,
+		pub string: StringIndexSize,
+		pub coded: CodedIndexSizes,
+		pub tables: TableIndexSizes,
 	}
 
+	#[derive(Debug)]
 	pub struct GuidIndexSize(pub(crate) usize);
+	#[derive(Debug)]
 	pub struct BlobIndexSize(pub(crate) usize);
+	#[derive(Debug)]
 	pub struct StringIndexSize(pub(crate) usize);
+	#[derive(Debug)]
 	pub struct CodedIndexSizes(pub(crate) [usize; 14]);
-	pub struct TableIndexSizes(pub(crate) [usize; 64]);
+	#[derive(Debug)]
+	pub struct TableIndexSizes(pub(crate) [usize; 55]);
 
 	impl IndexSizes {
-		pub fn new(heap_sizes: u8, table_lens: &[u32; 64]) -> Box<Self> {
-			unsafe {
-				let ptr = std::alloc::alloc(Layout::new::<Self>()) as *mut Self;
-				let mut val = Box::from_raw(ptr);
-
-				val.blob = BlobIndexSize(2 + 2 * ((heap_sizes & 0x4) != 0) as usize);
-				val.guid = GuidIndexSize(2 + 2 * ((heap_sizes & 0x2) != 0) as usize);
-				val.string = StringIndexSize(2 + 2 * ((heap_sizes & 0x1) != 0) as usize);
-
-				for (size, len) in val.tables.0.iter_mut().zip(table_lens) {
-					*size = 2 + 2 * (*len > 65536) as usize
+		pub fn new(heap_sizes: u8, table_lens: &[u32; 55]) -> Arc<Self> {
+			let sizes = Self {
+				blob: BlobIndexSize(2 + 2 * ((heap_sizes & 0x4) != 0) as usize),
+				guid: GuidIndexSize(2 + 2 * ((heap_sizes & 0x2) != 0) as usize),
+				string: StringIndexSize(2 + 2 * ((heap_sizes & 0x1) != 0) as usize),
+				tables: {
+					let mut tables = [0; 55];
+					for (size, len) in tables.iter_mut().zip(table_lens) {
+						*size = 2 + 2 * (*len > 65536) as usize
+					}
+					TableIndexSizes(tables)
+				},
+				coded: unsafe {
+					let mut coded = [0; 14];
+					for i in 0..14 {
+						let kind: CodedIndexKind = std::mem::transmute(i as u32);
+						coded[i] = kind.get_size(table_lens);
+					}
+					CodedIndexSizes(coded)
 				}
-
-				for i in 0..14 {
-					let kind: CodedIndexKind = std::mem::transmute(i as u32);
-					val.coded.0[i] = kind.get_size(table_lens);
-				}
-
-				val
-			}
+			};
+			Arc::new(sizes)
 		}
 	}
 	impl AsRef<()> for IndexSizes {
