@@ -2,39 +2,37 @@ use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Error, ErrorKind};
 use std::mem::size_of;
 use std::ops::Range;
-use std::sync::Arc;
-
-use owning_ref::ArcRef;
 
 use crate::utilities::{FromByteStream, impl_from_byte_stream, read_bytes_slice_from_stream};
 
 #[repr(C)]
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct PEFile {
+pub struct PEFile<'l> {
 	pub dos_header: DOSHeader,
 	pub pe_header: PEHeader,
-	pub sections: Vec<Section>,
+	pub sections: Vec<Section<'l>>,
 }
 
-impl PEFile {
-	pub fn resolve_rva(&self, rva: u32) -> Option<(&Section, ArcRef<[u8]>, usize)> {
+impl<'l> PEFile<'l> {
+	pub fn resolve_rva(&self, rva: u32) -> Option<(&Section<'l>, &'l [u8], usize)> {
 		let section = self.sections.iter().find(|s| s.virtual_data_range().contains(&rva))?;
 		let idx = rva - section.header.virtual_address;
 		Some((
 			section,
-			section.data.clone().map(|s| &s[idx as usize..]),
+			&section.data[idx as usize..],
 			idx as usize,
 		))
 	}
 }
 
-impl FromByteStream for PEFile {
-	type Deps = ();
+impl<'l> TryFrom<&'l [u8]> for PEFile<'l> {
+	type Error = Error;
 	#[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
-	fn read(stream: &mut Cursor<&[u8]>, _: &Self::Deps) -> std::io::Result<Self> {
-		let dos_header = DOSHeader::read(stream, &())?;
+	fn try_from(value: &'l [u8]) -> Result<Self, Self::Error> {
+		let mut stream = Cursor::new(value);
+		let dos_header = DOSHeader::read(&mut stream, &())?;
 		stream.set_position(dos_header.new_header_start as u64);
-		let pe_header = PEHeader::read(stream, &())?;
+		let pe_header = PEHeader::read(&mut stream, &())?;
 
 		stream.set_position(
 			dos_header.new_header_start as u64
@@ -43,16 +41,16 @@ impl FromByteStream for PEFile {
 		);
 
 		#[allow(unused_mut)]
-		let mut create_sections = || -> Result<Vec<Section>, Error> {
+			let mut create_sections = || -> Result<Vec<Section>, Error> {
 			let mut sections = Vec::with_capacity(pe_header.image_file_header.number_of_sections as usize);
 			for _ in 0..pe_header.image_file_header.number_of_sections as usize {
-				let header = SectionHeader::read(stream, &())?;
+				let header = SectionHeader::read(&mut stream, &())?;
 				let position = stream.position();
 				stream.set_position(header.pointer_to_raw_data as u64);
-				let data = read_bytes_slice_from_stream(stream, header.size_of_raw_data as usize)?;
+				let data = read_bytes_slice_from_stream(&mut stream, header.size_of_raw_data as usize)?;
 				sections.push(Section {
 					header,
-					data: ArcRef::new(Arc::from(data)),
+					data,
 				});
 				stream.set_position(position);
 			}
@@ -60,10 +58,10 @@ impl FromByteStream for PEFile {
 		};
 
 		#[cfg(not(feature = "tracing"))]
-		let sections = create_sections()?;
+			let sections = create_sections()?;
 
 		#[cfg(feature = "tracing")]
-		let sections = tracing::trace_span!("create_sections").in_scope(create_sections)?;
+			let sections = tracing::trace_span!("create_sections").in_scope(create_sections)?;
 
 		Ok(Self {
 			dos_header,
@@ -289,18 +287,18 @@ pub struct SectionHeader {
 impl_from_byte_stream!(SectionHeader);
 
 #[derive(Clone, Eq, PartialEq)]
-pub struct Section {
+pub struct Section<'l> {
 	pub header: SectionHeader,
-	pub data: ArcRef<[u8]>,
+	pub data: &'l [u8],
 }
 
-impl Section {
+impl<'l> Section<'l> {
 	pub fn virtual_data_range(&self) -> Range<u32> {
 		self.header.virtual_address..self.header.virtual_address + self.header.size_of_raw_data
 	}
 }
 
-impl Debug for Section {
+impl Debug for Section<'_> {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
 		let mut dbg = f.debug_struct("Section");
 		dbg.field("header", &self.header);

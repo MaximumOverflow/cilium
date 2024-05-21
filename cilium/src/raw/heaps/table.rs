@@ -1,247 +1,55 @@
-use std::io::{Cursor, Error, ErrorKind, Read};
-use std::any::TypeId;
-use std::fmt::Debug;
+use std::io::{Cursor, Read};
 use std::sync::Arc;
 
 use bitflags::bitflags;
-use owning_ref::ArcRef;
+use derivative::Derivative;
+use paste::paste;
 
-use cilium_derive::{FromRepr, Table};
+use cilium_derive::FromRepr;
 
 use crate::raw::heaps::{BlobIndex, GuidIndex, StringIndex};
-use crate::raw::indices::coded_index::{CustomAttributeType, HasConstant, HasCustomAttribute, HasDeclSecurity, HasFieldMarshal, HasSemantics, Implementation, MemberForwarded, MemberRefParent, MethodDefOrRef, ResolutionScope, TypeDefOrRef, TypeOrMethodDef};
-use crate::raw::indices::sizes::*;
-use crate::utilities::{enumerate_set_bits, FromByteStream, impl_from_byte_stream};
+use crate::raw::indices::coded_index::*;
+use crate::raw::indices::sizes::{IndexSizes, SizeOf};
+use crate::utilities::FromByteStream;
+use crate::utilities::impl_from_byte_stream;
+use crate::utilities::enumerate_set_bits;
 
-#[derive(Debug)]
-pub struct TableHeap {
-	major_version: u8,
-	minor_version: u8,
-	tables: Vec<Arc<dyn Table>>,
-	index_sizes: Arc<IndexSizes>,
-}
+macro_rules! define_flags {
+	() => {};
+    (
+		$(#[$outer:meta])*
+        $vis:vis struct $BitFlags:ident: $T:ty {
+            $(
+                $(#[$inner:ident $($args:tt)*])*
+                const $Flag:tt = $value:expr;
+            )*
+        }
 
-impl TableHeap {
-	pub fn minor_version(&self) -> u8 {
-		self.minor_version
-	}
-	pub fn major_version(&self) -> u8 {
-		self.major_version
-	}
-	pub fn get_table<T: Table + 'static>(&self) -> Option<&T> {
-		for table in &self.tables {
-			if Table::type_id(&**table) == TypeId::of::<T>() {
-				let table = table.as_ref() as *const dyn Table as *const T;
-				return Some(unsafe { &*table });
+        $($t:tt)*
+	) => {
+		bitflags! {
+			$(#[$outer])*
+			$vis struct $BitFlags: $T {
+				$(
+					$(#[$inner $($args)*])*
+					const $Flag = $value;
+				)*
 			}
 		}
-		None
-	}
-	pub fn get_table_arc<T: Table + 'static>(&self) -> Option<Arc<T>> {
-		for table in &self.tables {
-			if Table::type_id(&**table) == TypeId::of::<T>() {
-				unsafe {
-					let ptr = Arc::into_raw(table.clone()) as *const T;
-					return Some(Arc::from_raw(ptr));
-				}
+
+		impl SizeOf<$BitFlags> for IndexSizes {
+			fn size_of(&self) -> usize {
+				std::mem::size_of::<$BitFlags>()
 			}
 		}
-		None
-	}
-	pub(crate) fn index_sizes(&self) -> &Arc<IndexSizes> {
-		&self.index_sizes
-	}
+
+		impl_from_byte_stream!($BitFlags);
+
+		define_flags!($($t)*);
+	};
 }
 
-impl TryFrom<ArcRef<[u8]>> for TableHeap {
-	type Error = Error;
-	#[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
-	fn try_from(value: ArcRef<[u8]>) -> Result<Self, Self::Error> {
-		#[repr(C)]
-		#[derive(Copy, Clone)]
-		struct Header {
-			reserved_0: u32,
-			major_version: u8,
-			minor_version: u8,
-			heap_sizes: u8,
-			reserved_1: u8,
-			valid: u64,
-			sorted: u64,
-		}
-
-		impl_from_byte_stream!(Header);
-
-		let mut stream = Cursor::new(value.as_ref());
-		let Header {
-			heap_sizes,
-			valid,
-			minor_version,
-			major_version,
-			..
-		} = Header::read(&mut stream, &())?;
-
-		let table_count = valid.count_ones() as usize;
-		let mut table_sizes = vec![0u32; 55];
-
-		for i in enumerate_set_bits(valid) {
-			let mut bytes = 0u32.to_ne_bytes();
-			stream.read_exact(&mut bytes)?;
-			table_sizes[i] = u32::from_le_bytes(bytes);
-		}
-
-		let idx_sizes = IndexSizes::new(heap_sizes, table_sizes.as_slice().try_into().unwrap());
-
-		let mut tables: Vec<Arc<dyn Table>> = Vec::with_capacity(table_count);
-		for i in enumerate_set_bits(valid) {
-			let len = table_sizes[i] as usize;
-			let Some(kind) = TableKind::from_repr(i) else {
-				return Err(ErrorKind::InvalidData.into());
-			};
-
-			#[rustfmt::skip]
-			tables.push(match kind {
-				TableKind::Module => 				 Arc::new(ModuleTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::TypeRef => 				 Arc::new(TypeRefTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::TypeDef => 				 Arc::new(TypeDefTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::FieldPtr => 				 todo!("Unimplemented table FieldPtr"),
-				TableKind::Field => 				 Arc::new(FieldTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::MethodPtr => 			 todo!("Unimplemented table MethodPtr"),
-				TableKind::MethodDef => 			 Arc::new(MethodDefTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::ParamPtr => 				 todo!("Unimplemented table ParamPtr"),
-				TableKind::Param => 				 Arc::new(ParamTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::InterfaceImpl => 		 Arc::new(InterfaceImplTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::MemberRef => 			 Arc::new(MemberRefTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::Constant => 				 Arc::new(ConstantTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::CustomAttribute => 		 Arc::new(CustomAttributeTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::FieldMarshal => 			 Arc::new(FieldMarshalTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::DeclSecurity => 			 Arc::new(DeclSecurityTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::ClassLayout => 			 Arc::new(ClassLayoutTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::FieldLayout => 			 Arc::new(FieldLayoutTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::StandAloneSig => 		 Arc::new(StandAloneSigTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::EventMap => 				 Arc::new(EventMapTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::EventPtr => 				 todo!("Unimplemented table EventPtr"),
-				TableKind::Event => 				 Arc::new(EventTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::PropertyMap => 			 Arc::new(PropertyMapTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::PropertyPtr => 			 todo!("Unimplemented table PropertyPtr"),
-				TableKind::Property => 				 Arc::new(PropertyTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::MethodSemantics => 		 Arc::new(MethodSemanticsTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::MethodImpl => 			 Arc::new(MethodImplTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::ModuleRef => 			 Arc::new(ModuleRefTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::TypeSpec => 				 Arc::new(TypeSpecTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::ImplMap => 				 Arc::new(ImplMapTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::FieldRVA => 				 Arc::new(FieldRVATable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::EncLog => 				 todo!("Unimplemented table EncLog"),
-				TableKind::EncMap => 				 todo!("Unimplemented table EncMap"),
-				TableKind::Assembly => 				 Arc::new(AssemblyTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::AssemblyProcessor => 	 todo!("Unimplemented table AssemblyProcessor"),
-				TableKind::AssemblyOS => 			 todo!("Unimplemented table AssemblyOS"),
-				TableKind::AssemblyRef => 			 Arc::new(AssemblyRefTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::AssemblyRefProcessor => 	 todo!("Unimplemented table AssemblyRefProcessor"),
-				TableKind::AssemblyRefOS => 		 todo!("Unimplemented table AssemblyRefOS"),
-				TableKind::File => 					 todo!("Unimplemented table File"),
-				TableKind::ExportedType => 			 Arc::new(ExportedTypeTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::ManifestResource => 		 Arc::new(ManifestResourceTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::NestedClass => 			 Arc::new(NestedClassTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::GenericParam => 			 Arc::new(GenericParamTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::MethodSpec => 			 Arc::new(MethodSpecTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::GenericParamConstraint => Arc::new(GenericParamConstraintTable::read(&mut stream, &idx_sizes, len)?),
-				TableKind::Document => 				 todo!("Unimplemented table Document"),
-				TableKind::MethodDebugInformation => todo!("Unimplemented table MethodDebugInformation"),
-				TableKind::LocalScope => 			 todo!("Unimplemented table LocalScope"),
-				TableKind::LocalVariable => 		 todo!("Unimplemented table LocalVariable"),
-				TableKind::LocalConstant => 		 todo!("Unimplemented table LocalConstant"),
-				TableKind::ImportScope => 			 todo!("Unimplemented table ImportScope"),
-				TableKind::StateMachineMethod => 	 todo!("Unimplemented table StateMachineMethod"),
-				TableKind::CustomDebugInformation => todo!("Unimplemented table CustomDebugInformation"),
-			});
-		}
-
-		Ok(Self {
-			major_version,
-			minor_version,
-			tables,
-			index_sizes: idx_sizes,
-		})
-	}
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, FromRepr)]
-pub enum TableKind {
-	Module = 0x00,
-	TypeRef = 0x01,
-	TypeDef = 0x02,
-	FieldPtr = 0x03,
-	Field = 0x04,
-	MethodPtr = 0x05,
-	MethodDef = 0x06,
-	ParamPtr = 0x07,
-	Param = 0x08,
-	InterfaceImpl = 0x09,
-	MemberRef = 0x0a,
-	Constant = 0x0b,
-	CustomAttribute = 0x0c,
-	FieldMarshal = 0x0d,
-	DeclSecurity = 0x0e,
-	ClassLayout = 0x0f,
-	FieldLayout = 0x10,
-	StandAloneSig = 0x11,
-	EventMap = 0x12,
-	EventPtr = 0x13,
-	Event = 0x14,
-	PropertyMap = 0x15,
-	PropertyPtr = 0x16,
-	Property = 0x17,
-	MethodSemantics = 0x18,
-	MethodImpl = 0x19,
-	ModuleRef = 0x1a,
-	TypeSpec = 0x1b,
-	ImplMap = 0x1c,
-	FieldRVA = 0x1d,
-	EncLog = 0x1e,
-	EncMap = 0x1f,
-	Assembly = 0x20,
-	AssemblyProcessor = 0x21,
-	AssemblyOS = 0x22,
-	AssemblyRef = 0x23,
-	AssemblyRefProcessor = 0x24,
-	AssemblyRefOS = 0x25,
-	File = 0x26,
-	ExportedType = 0x27,
-	ManifestResource = 0x28,
-	NestedClass = 0x29,
-	GenericParam = 0x2a,
-	MethodSpec = 0x2b,
-	GenericParamConstraint = 0x2c,
-
-	Document = 0x30,
-	MethodDebugInformation = 0x31,
-	LocalScope = 0x32,
-	LocalVariable = 0x33,
-	LocalConstant = 0x34,
-	ImportScope = 0x35,
-	StateMachineMethod = 0x36,
-	CustomDebugInformation = 0x37,
-}
-
-#[allow(clippy::len_without_is_empty)]
-pub trait Table: 'static + Debug + Send + Sync {
-	fn len(&self) -> usize;
-	fn kind(&self) -> TableKind;
-	fn type_id(&self) -> TypeId {
-		TypeId::of::<Self>()
-	}
-}
-
-#[derive(Debug, Clone, Table)]
-pub struct Module {
-	pub generation: u16,
-	pub name: StringIndex,
-	pub mv_id: GuidIndex,
-	pub enc_id: GuidIndex,
-	pub enc_base_id: GuidIndex,
-}
-
-bitflags! {
+define_flags! {
 	#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 	pub struct TypeAttributes: u32 {
 		// #### Visibility attributes ####
@@ -322,28 +130,7 @@ bitflags! {
 		/// This ExportedType entry is a type forwarder.
 		const IsTypeForwarder = 0x00200000;
 	}
-}
 
-impl_from_byte_stream!(TypeAttributes);
-
-#[derive(Debug, Clone, Table)]
-pub struct TypeDef {
-	pub flags: TypeAttributes,
-	pub type_name: StringIndex,
-	pub type_namespace: StringIndex,
-	pub extends: TypeDefOrRef,
-	pub field_list: FieldIndex,
-	pub method_list: MethodDefIndex,
-}
-
-#[derive(Debug, Clone, Table)]
-pub struct TypeRef {
-	pub resolution_scope: ResolutionScope,
-	pub type_name: StringIndex,
-	pub type_namespace: StringIndex,
-}
-
-bitflags! {
 	#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 	pub struct FieldAttributes: u16 {
 		// #### Accessibility attributes ####
@@ -388,18 +175,19 @@ bitflags! {
 		/// Field has RVA.
 		const HAS_FIELD_RVA = 0x0100;
 	}
-}
 
-impl_from_byte_stream!(FieldAttributes);
+	#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+	pub struct AssemblyFlags: u32 {
+		/// The assembly reference holds the full (unhashed) public key.
+		const PUBLIC_KEY = 0x0001;
+		/// The implementation of this assembly used at runtime is not expected to match the version seen at compile time.
+		const RETARGETABLE = 0x0100;
+		/// Reserved (a conforming implementation of the CLI can ignore this setting on read; some implementations might use this bit to indicate that a CIL-to-native-code compiler should not generate optimized code).
+		const DISABLE_JIT_COMPILE_OPTIMIZER = 0x4000;
+		/// Reserved (a conforming implementation of the CLI can ignore this setting on read; some implementations might use this bit to indicate that a CIL-to-native-codecompiler should generate CIL-to-native code map).
+		const ENABLE_JIT_COMPILE_TRACKING = 0x8000;
+	}
 
-#[derive(Debug, Clone, Table)]
-pub struct Field {
-	pub flags: FieldAttributes,
-	pub name: StringIndex,
-	pub signature: BlobIndex,
-}
-
-bitflags! {
 	#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 	pub struct MethodAttributes: u16 {
 		//TODO
@@ -409,193 +197,523 @@ bitflags! {
 	pub struct MethodImplAttributes: u16 {
 		//TODO
 	}
-}
 
-impl_from_byte_stream!(MethodAttributes);
-impl_from_byte_stream!(MethodImplAttributes);
-
-#[derive(Debug, Clone, Table)]
-pub struct MethodDef {
-	pub rva: u32,
-	pub impl_flags: MethodAttributes,
-	pub flags: MethodAttributes,
-	pub name: StringIndex,
-	pub signature: BlobIndex,
-	pub param_list: ParamIndex,
-}
-
-bitflags! {
 	#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 	pub struct ParamAttributes: u16 {
 		//TODO
 	}
-}
 
-impl_from_byte_stream!(ParamAttributes);
-
-#[derive(Debug, Clone, Table)]
-pub struct Param {
-	pub flags: ParamAttributes,
-	pub sequence: u16,
-	pub name: StringIndex,
-}
-
-#[derive(Debug, Clone, Table)]
-pub struct InterfaceImpl {
-	pub class: TypeDefIndex,
-	pub interface: TypeDefOrRef,
-}
-
-#[derive(Debug, Clone, Table)]
-pub struct MemberRef {
-	pub class: MemberRefParent,
-	pub name: StringIndex,
-	pub signature: BlobIndex,
-}
-
-#[derive(Debug, Clone, Table)]
-pub struct Constant {
-	pub ty: [u8; 2],
-	pub parent: HasConstant,
-	pub value: BlobIndex,
-}
-
-#[derive(Debug, Clone, Table)]
-pub struct CustomAttribute {
-	pub parent: HasCustomAttribute,
-	pub ty: CustomAttributeType,
-	pub value: BlobIndex,
-}
-
-#[derive(Debug, Clone, Table)]
-pub struct FieldMarshal {
-	pub parent: HasFieldMarshal,
-	pub native_type: BlobIndex,
-}
-
-#[derive(Debug, Clone, Table)]
-pub struct DeclSecurity {
-	action: u16, // TODO
-	parent: HasDeclSecurity,
-	permission_set: BlobIndex,
-}
-
-#[derive(Debug, Clone, Table)]
-pub struct ClassLayout {
-	pub packing_size: u16,
-	pub class_size: u32,
-	pub parent: TypeDefIndex,
-}
-
-#[derive(Debug, Clone, Table)]
-pub struct FieldLayout {
-	pub offset: u32,
-	pub field: FieldIndex,
-}
-
-#[derive(Debug, Clone, Table)]
-pub struct StandAloneSig {
-	pub signature: BlobIndex,
-}
-
-#[derive(Debug, Clone, Table)]
-pub struct EventMap {
-	pub parent: TypeDefIndex,
-	pub event_list: EventIndex,
-}
-
-bitflags! {
 	#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 	pub struct EventAttributes: u16 {
 		//TODO
 	}
-}
 
-impl_from_byte_stream!(EventAttributes);
-
-#[derive(Debug, Clone, Table)]
-pub struct Event {
-	pub flags: EventAttributes,
-	pub name: StringIndex,
-	pub ty: TypeDefOrRef,
-}
-
-#[derive(Debug, Clone, Table)]
-pub struct PropertyMap {
-	pub parent: TypeDefIndex,
-	pub property_list: PropertyIndex,
-}
-
-bitflags! {
 	#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 	pub struct PropertyAttributes: u16 {
 		//TODO
 	}
-}
 
-impl_from_byte_stream!(PropertyAttributes);
-
-#[derive(Debug, Clone, Table)]
-pub struct Property {
-	pub flags: PropertyAttributes,
-	pub name: StringIndex,
-	pub ty: BlobIndex,
-}
-
-bitflags! {
 	#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 	pub struct MethodSemanticsAttributes: u16 {
 		//TODO
 	}
-}
 
-impl_from_byte_stream!(MethodSemanticsAttributes);
-
-#[derive(Debug, Clone, Table)]
-pub struct MethodSemantics {
-	pub flags: MethodSemanticsAttributes,
-	pub method: MethodDefIndex,
-	pub association: HasSemantics,
-}
-
-#[derive(Debug, Clone, Table)]
-pub struct MethodImpl {
-	pub class: TypeDefIndex,
-	pub body: MethodDefOrRef,
-	pub declaration: MethodDefOrRef,
-}
-
-#[derive(Debug, Clone, Table)]
-pub struct ModuleRef {
-	pub name: StringIndex,
-}
-
-#[derive(Debug, Clone, Table)]
-pub struct TypeSpec {
-	pub signature: BlobIndex,
-}
-
-bitflags! {
 	#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 	pub struct PInvokeAttributes: u16 {
 		//TODO
 	}
+
+	#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+	pub struct ManifestResourceAttributes: u32 {
+		//TODO
+	}
+
+	#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+	pub struct GenericParamAttributes: u16 {
+		//TODO
+	}
+
+	#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+	pub struct FileAttributes: u32 {
+		//TODO
+	}
 }
 
-impl_from_byte_stream!(PInvokeAttributes);
 
-#[derive(Debug, Clone, Table)]
-pub struct ImplMap {
-	pub flags: PInvokeAttributes,
-	pub member_forwarded: MemberForwarded,
-	pub import_name: StringIndex,
-	pub import_scope: ModuleRefIndex,
+macro_rules! size_of {
+    (u8, $sizes: expr) => { 1 };
+    (u16, $sizes: expr) => { 2 };
+    (u32, $sizes: expr) => { 4 };
+    (u64, $sizes: expr) => { 8 };
+    (GuidIndex, $sizes: expr) => { $sizes.guid };
+    (BlobIndex, $sizes: expr) => { $sizes.blob };
+    (StringIndex, $sizes: expr) => { $sizes.string };
+    ($ty: ty, $sizes: expr) => { <IndexSizes as SizeOf<$ty>>::size_of($sizes) };
 }
 
-#[derive(Debug, Clone, Table)]
-pub struct FieldRVA {
-	pub rva: u32,
-	pub field: FieldIndex,
+macro_rules! read_fn {
+	($row: ident, { $($field: ident: $ty: ty $(=> |$($args:ident),*| { $($stmts:tt)* })? ),* }) => {
+		fn read(cursor: &mut Cursor<&[u8]>, idx_sizes: &IndexSizes) -> std::io::Result<$row> {
+			Ok(
+				$row {
+					$(
+						$field: read_fn!(cursor, idx_sizes, { $field: $ty } $(=> |$($args),*| { $($stmts)* })? )
+					),*
+				}
+			)
+		}
+	};
+	($cursor: ident, $idx_sizes: ident, { $field: ident: $ty: ty }) => {
+		<$ty>::read($cursor, $idx_sizes.as_ref())?
+	};
+    ($cursor: ident, $idx_sizes: ident, { $field: ident: $ty: ty } => |$($args:ident),*| { $($stmts:tt)* }) => {
+		{
+			let fld_read = |$($args),*| { $($stmts)* };
+			fld_read($cursor, $idx_sizes)?
+		}
+	};
+}
+
+macro_rules! decl_tables {
+    (
+		[$($enum_name: ident = $enum_discriminant: literal),*]
+		$(
+			$vis: vis struct $row: ident: $discriminant: literal {
+				$(
+					$fld_vis: vis $field: ident: $ty: ty $(=> |$($args:ident),*| { $($stmts:tt)* })?,
+				)*
+			}
+		)*
+	)=> {
+		paste! {
+			$(
+				#[derive(Copy, Clone)]
+				#[allow(dead_code)]
+				$vis struct $row {
+					$(
+						$fld_vis $field: $ty,
+					)*
+				}
+
+				impl $row {
+					pub fn calc_size(sizes: &IndexSizes) -> usize {
+						let fields = [$(size_of!($ty, sizes)),*];
+						fields.into_iter().sum()
+					}
+				}
+
+				impl FromByteStream for $row {
+					type Deps = IndexSizes;
+					fn read(stream: &mut Cursor<&[u8]>, deps: &Self::Deps) -> std::io::Result<Self> {
+						read_fn! {
+							$row,
+							{ $($field: $ty $(=> |$($args),*| { $($stmts)* })? ),* }
+						}
+						read(stream, deps)
+					}
+				}
+
+				#[derive(Clone)]
+				#[derive(Derivative)] // Temporary
+				#[derivative(Debug)]
+				$vis struct [<$row Table>]<'l> {
+					len: usize,
+					row_size: usize,
+					#[derivative(Debug="ignore")]
+					data: &'l [u8],
+					#[derivative(Debug="ignore")]
+					idx_sizes: Arc<IndexSizes>,
+				}
+
+				impl<'l> [<$row Table>]<'l> {
+					#[inline]
+					pub const fn len(&self) -> usize {
+						self.len
+					}
+
+					#[inline]
+					pub fn rows(&'l self) -> impl Iterator<Item=std::io::Result<$row>> + 'l {
+						let mut cursor = Cursor::new(self.data);
+						(0..self.len).map(move |_| $row::read(&mut cursor, &self.idx_sizes))
+					}
+
+					pub fn get(&'l self, idx: usize) -> std::io::Result<$row> {
+						let offset = self.row_size * idx;
+						let Some(data) = self.data.get(offset..offset+self.row_size) else {
+							return Err(std::io::ErrorKind::InvalidInput.into());
+						};
+						let mut cursor = Cursor::new(data);
+						$row::read(&mut cursor, &self.idx_sizes)
+					}
+				}
+
+				#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+				$vis struct [<$row Index>](usize);
+
+				impl [<$row Index>] {
+					#[inline]
+					pub const fn new(idx: Option<usize>) -> Self {
+						match idx {
+							None => Self(0),
+							Some(idx) => Self(idx + 1),
+						}
+					}
+
+					#[inline]
+					pub const fn idx(&self) -> Option<usize> {
+						match self.0 {
+							0 => None,
+							_ => Some(self.0 - 1),
+						}
+					}
+				}
+
+				impl SizeOf<[<$row Index>]> for IndexSizes {
+					fn size_of(&self) -> usize {
+						self.tables[TableKind::$row as usize]
+					}
+				}
+
+				impl FromByteStream for [<$row Index>] {
+					type Deps = IndexSizes;
+					fn read(stream: &mut Cursor<&[u8]>, deps: &Self::Deps) -> std::io::Result<Self> {
+						let table_size = <IndexSizes as SizeOf<[<$row Index>]>>::size_of(deps);
+						let size = 2 + 2 * (table_size > 65536) as usize;
+						let mut value = 0usize.to_ne_bytes();
+						stream.read_exact(&mut value[..size])?;
+						Ok(Self(usize::from_le_bytes(value)))
+					}
+				}
+
+				impl<'l> GetTable<[<$row Table>]<'l>> for TableHeap<'l> {
+					fn get_table(&self) -> Option<&[<$row Table>]<'l>> {
+						self.tables.iter().find_map(|t| match t {
+							Table::$row(t) => Some(t),
+							_ => None,
+						})
+					}
+				}
+			)*
+
+			#[derive(Debug, Clone)]
+			pub enum Table<'l> {
+				$($row([<$row Table>]<'l>)),*
+			}
+
+			#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, FromRepr)]
+			pub enum TableKind {
+				$($row = $discriminant,)*
+				$($enum_name = $enum_discriminant,)*
+			}
+
+			impl<'l> TryFrom<&'l [u8]> for TableHeap<'l> {
+				type Error = std::io::Error;
+				#[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
+				fn try_from(value: &'l [u8]) -> Result<Self, Self::Error> {
+					#[repr(C)]
+					#[derive(Copy, Clone)]
+					struct Header {
+						reserved_0: u32,
+						major_version: u8,
+						minor_version: u8,
+						heap_sizes: u8,
+						reserved_1: u8,
+						valid: u64,
+						sorted: u64,
+					}
+
+					impl_from_byte_stream!(Header);
+
+					let mut stream = Cursor::new(value);
+					let Header {
+						heap_sizes,
+						valid,
+						minor_version,
+						major_version,
+						..
+					} = Header::read(&mut stream, &())?;
+
+					let table_count = valid.count_ones() as usize;
+					let mut table_sizes = vec![0u32; 55];
+
+					for i in enumerate_set_bits(valid) {
+						let mut bytes = 0u32.to_ne_bytes();
+						stream.read_exact(&mut bytes)?;
+						table_sizes[i] = u32::from_le_bytes(bytes);
+					}
+
+					let mut offset = stream.position() as usize;
+					let idx_sizes = IndexSizes::new(heap_sizes, table_sizes.as_slice().try_into().unwrap());
+
+					let mut tables: Vec<Table> = Vec::with_capacity(table_count);
+					for i in enumerate_set_bits(valid) {
+						let len = table_sizes[i] as usize;
+						let Some(kind) = TableKind::from_repr(i) else {
+							return Err(std::io::ErrorKind::InvalidData.into());
+						};
+
+						#[rustfmt::skip]
+						tables.push(match kind {
+							$(
+								TableKind::$row => Table::$row({
+									let row_size = $row::calc_size(&idx_sizes);
+									let table_size = row_size * len;
+									let Some(data) = value.get(offset..offset+table_size) else {
+										return Err(std::io::ErrorKind::InvalidData.into());
+									};
+									offset += table_size;
+
+									[<$row Table>] {
+										len,
+										row_size,
+										data,
+										idx_sizes: idx_sizes.clone(),
+									}
+								}),
+							)*
+							_ => todo!("Unimplemented table {kind:?}")
+						});
+					}
+
+					Ok(Self {
+						major_version,
+						minor_version,
+						tables,
+					})
+				}
+			}
+		}
+	};
+}
+
+decl_tables! {
+	[
+		Document = 0x30,
+		MethodDebugInformation = 0x31,
+		LocalScope = 0x32,
+		LocalVariable = 0x33,
+		LocalConstant = 0x34,
+		ImportScope = 0x35,
+		StateMachineMethod = 0x36,
+		CustomDebugInformation = 0x37
+	]
+
+	pub struct Module: 0x00 {
+		pub generation: u16,
+		pub name: StringIndex,
+		pub mv_id: GuidIndex,
+		pub enc_id: GuidIndex,
+		pub enc_base_id: GuidIndex,
+	}
+
+	pub struct TypeRef: 0x01 {
+		pub resolution_scope: ResolutionScope,
+		pub name: StringIndex,
+		pub namespace: StringIndex,
+	}
+
+	pub struct TypeDef: 0x02 {
+		pub flags: TypeAttributes,
+		pub type_name: StringIndex,
+		pub type_namespace: StringIndex,
+		pub extends: TypeDefOrRef,
+		pub field_list: FieldIndex,
+		pub method_list: MethodDefIndex,
+	}
+
+	pub struct Field: 0x04 {
+		pub flags: FieldAttributes,
+		pub name: StringIndex,
+		pub signature: BlobIndex,
+	}
+
+	pub struct MethodDef: 0x06 {
+		pub rva: u32,
+		pub impl_flags: MethodAttributes,
+		pub flags: MethodAttributes,
+		pub name: StringIndex,
+		pub signature: BlobIndex,
+		pub param_list: ParamIndex,
+	}
+
+	pub struct Param: 0x08 {
+		pub flags: ParamAttributes,
+		pub sequence: u16,
+		pub name: StringIndex,
+	}
+
+	pub struct InterfaceImpl: 0x09 {
+		pub class: TypeDefIndex,
+		pub interface: TypeDefOrRef,
+	}
+
+	pub struct MemberRef: 0x0A {
+		pub class: MemberRefParent,
+		pub name: StringIndex,
+		pub signature: BlobIndex,
+	}
+
+	pub struct Constant: 0x0B {
+		pub ty: [u8; 2],
+		pub parent: HasConstant,
+		pub value: BlobIndex,
+	}
+
+	pub struct CustomAttribute: 0x0C {
+		pub parent: HasCustomAttribute,
+		pub ty: CustomAttributeType,
+		pub value: BlobIndex,
+	}
+
+	pub struct FieldMarshal: 0x0D {
+		pub parent: HasFieldMarshal,
+		pub native_type: BlobIndex,
+	}
+
+	pub struct DeclSecurity: 0x0E {
+		action: u16, // TODO
+		parent: HasDeclSecurity,
+		permission_set: BlobIndex,
+	}
+
+	pub struct ClassLayout: 0x0F {
+		pub packing_size: u16,
+		pub class_size: u32,
+		pub parent: TypeDefIndex,
+	}
+
+	pub struct FieldLayout: 0x10 {
+		pub offset: u32,
+		pub field: FieldIndex,
+	}
+
+	pub struct StandAloneSig: 0x11 {
+		pub signature: BlobIndex,
+	}
+
+	pub struct EventMap: 0x12 {
+		pub parent: TypeDefIndex,
+		pub event_list: EventIndex,
+	}
+
+	pub struct Event: 0x14 {
+		pub flags: EventAttributes,
+		pub name: StringIndex,
+		pub ty: TypeDefOrRef,
+	}
+
+	pub struct PropertyMap: 0x15 {
+		pub parent: TypeDefIndex,
+		pub property_list: PropertyIndex,
+	}
+
+	pub struct Property: 0x17 {
+		pub flags: PropertyAttributes,
+		pub name: StringIndex,
+		pub ty: BlobIndex,
+	}
+
+	pub struct MethodSemantics: 0x18 {
+		pub flags: MethodSemanticsAttributes,
+		pub method: MethodDefIndex,
+		pub association: HasSemantics,
+	}
+
+	pub struct MethodImpl: 0x19 {
+		pub class: TypeDefIndex,
+		pub body: MethodDefOrRef,
+		pub declaration: MethodDefOrRef,
+	}
+
+	pub struct ModuleRef: 0x1A {
+		pub name: StringIndex,
+	}
+
+	pub struct TypeSpec: 0x1B {
+		pub signature: BlobIndex,
+	}
+
+	pub struct ImplMap: 0x1C {
+		pub flags: PInvokeAttributes,
+		pub member_forwarded: MemberForwarded,
+		pub import_name: StringIndex,
+		pub import_scope: ModuleRefIndex,
+	}
+
+	pub struct FieldRVA: 0x1D {
+		pub rva: u32,
+		pub field: FieldIndex,
+	}
+
+	pub struct Assembly: 0x20 {
+		pub hash_algorithm: AssemblyHashAlgorithm,
+		pub major_version: u16,
+		pub minor_version: u16,
+		pub build_number: u16,
+		pub revision_number: u16,
+		pub flags: AssemblyFlags,
+		pub public_key: BlobIndex,
+		pub name: StringIndex,
+		pub culture: StringIndex,
+	}
+
+	pub struct AssemblyRef: 0x23 {
+		pub major_version: u16,
+		pub minor_version: u16,
+		pub build_number: u16,
+		pub revision_number: u16,
+		pub flags: AssemblyFlags,
+		pub public_key: BlobIndex,
+		pub name: StringIndex,
+		pub culture: StringIndex,
+		pub hash_value: BlobIndex,
+	}
+
+	pub struct File: 0x26 {
+		flags: FileAttributes,
+		name: StringIndex,
+		hash_value: BlobIndex,
+	}
+
+	pub struct ExportedType: 0x27 {
+		pub flags: TypeAttributes,
+		pub type_def: TypeDefIndex => |cursor, _idx_sizes| {
+			let value = u32::read(cursor, &())?;
+			Ok::<_, std::io::Error>(TypeDefIndex(value as usize))
+		},
+		pub name: StringIndex,
+		pub namespace: StringIndex,
+		pub implementation: Implementation,
+	}
+
+	pub struct ManifestResource: 0x28 {
+		pub offset: u32,
+		pub flags: ManifestResourceAttributes,
+		pub name: StringIndex,
+		pub implementation: Implementation,
+	}
+
+	pub struct NestedClass: 0x29 {
+		pub nested_class: TypeDefIndex,
+		pub enclosing_class: TypeDefIndex,
+	}
+
+	pub struct GenericParam: 0x2A {
+		pub number: u16,
+		pub flags: GenericParamAttributes,
+		pub owner: TypeOrMethodDef,
+		pub name: StringIndex,
+	}
+
+	pub struct MethodSpec: 0x2B {
+		pub method: MethodDefOrRef,
+		pub instantiation: BlobIndex,
+	}
+
+	pub struct GenericParamConstraint: 0x2C {
+		pub owner: GenericParamIndex,
+		pub constraint: TypeDefOrRef,
+	}
 }
 
 #[repr(u32)]
@@ -609,127 +727,34 @@ pub enum AssemblyHashAlgorithm {
 	SHA512 = 0x800E,
 }
 
+impl SizeOf<AssemblyHashAlgorithm> for IndexSizes {
+	fn size_of(&self) -> usize {
+		std::mem::size_of::<AssemblyHashAlgorithm>()
+	}
+}
+
 impl_from_byte_stream!(AssemblyHashAlgorithm);
 
-bitflags! {
-	#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-	pub struct AssemblyFlags: u32 {
-		/// The assembly reference holds the full (unhashed) public key.
-		const PUBLIC_KEY = 0x0001;
-		/// The implementation of this assembly used at runtime is not expected to match the version seen at compile time.
-		const RETARGETABLE = 0x0100;
-		/// Reserved (a conforming implementation of the CLI can ignore this setting on read; some implementations might use this bit to indicate that a CIL-to-native-code compiler should not generate optimized code).
-		const DISABLE_JIT_COMPILE_OPTIMIZER = 0x4000;
-		/// Reserved (a conforming implementation of the CLI can ignore this setting on read; some implementations might use this bit to indicate that a CIL-to-native-codecompiler should generate CIL-to-native code map).
-		const ENABLE_JIT_COMPILE_TRACKING = 0x8000;
+#[derive(Debug)]
+pub struct TableHeap<'l> {
+	major_version: u8,
+	minor_version: u8,
+	tables: Vec<Table<'l>>,
+}
+
+trait GetTable<T> {
+	fn get_table(&self) -> Option<&T>;
+}
+
+impl<'l> TableHeap<'l> {
+	pub fn major_version(&self) -> u8 {
+		self.major_version
 	}
-}
-
-impl_from_byte_stream!(AssemblyFlags);
-
-#[derive(Debug, Clone, Table)]
-pub struct Assembly {
-	pub hash_algorithm: AssemblyHashAlgorithm,
-	pub major_version: u16,
-	pub minor_version: u16,
-	pub build_number: u16,
-	pub revision_number: u16,
-	pub flags: AssemblyFlags,
-	pub public_key: BlobIndex,
-	pub name: StringIndex,
-	pub culture: StringIndex,
-}
-
-#[derive(Debug, Clone, Table)]
-pub struct AssemblyRef {
-	pub major_version: u16,
-	pub minor_version: u16,
-	pub build_number: u16,
-	pub revision_number: u16,
-	pub flags: AssemblyFlags,
-	pub public_key: BlobIndex,
-	pub name: StringIndex,
-	pub culture: StringIndex,
-	pub hash_value: BlobIndex,
-}
-
-#[derive(Debug, Clone, Table)]
-#[read_with(ExportedTypeTable::read_impl)]
-pub struct ExportedType {
-	pub flags: TypeAttributes,
-	pub type_def: TypeDefIndex,
-	pub name: StringIndex,
-	pub namespace: StringIndex,
-	pub implementation: Implementation,
-}
-
-impl ExportedTypeTable {
-	fn read_impl(stream: &mut Cursor<&[u8]>, idx_sizes: &IndexSizes, len: usize) -> std::io::Result<Self> {
-		let mut rows = Vec::with_capacity(len);
-		for _ in 0..len {
-			let row = ExportedType {
-				flags: <TypeAttributes>::read(stream, idx_sizes.as_ref())?,
-				// This index isn't variable length because the format is not consistent.
-				// P.S. Fuck you Microsoft.
-				type_def: TypeDefIndex(u32::read(stream, &())? as usize),
-				name: <StringIndex>::read(stream, idx_sizes.as_ref())?,
-				namespace: <StringIndex>::read(stream, idx_sizes.as_ref())?,
-				implementation: <Implementation>::read(stream, idx_sizes.as_ref())?,
-			};
-			rows.push(row)
-		}
-		Ok(Self { rows })
+	pub fn minor_version(&self) -> u8 {
+		self.minor_version
 	}
-}
-
-bitflags! {
-	#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-	pub struct ManifestResourceAttributes: u32 {
-		//TODO
+	#[allow(private_bounds)]
+	pub fn get_table<T>(&self) -> Option<&T> where Self: GetTable<T> {
+		GetTable::get_table(self)
 	}
-}
-
-impl_from_byte_stream!(ManifestResourceAttributes);
-
-#[derive(Debug, Clone, Table)]
-pub struct ManifestResource {
-	pub offset: u32,
-	pub flags: ManifestResourceAttributes,
-	pub name: StringIndex,
-	pub implementation: Implementation,
-}
-
-#[derive(Debug, Clone, Table)]
-pub struct NestedClass {
-	pub nested_class: TypeDefIndex,
-	pub enclosing_class: TypeDefIndex,
-}
-
-bitflags! {
-	#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-	pub struct GenericParamAttributes: u16 {
-		//TODO
-	}
-}
-
-impl_from_byte_stream!(GenericParamAttributes);
-
-#[derive(Debug, Clone, Table)]
-pub struct GenericParam {
-	pub number: u16,
-	pub flags: GenericParamAttributes,
-	pub owner: TypeOrMethodDef,
-	pub name: StringIndex,
-}
-
-#[derive(Debug, Clone, Table)]
-pub struct MethodSpec {
-	pub method: MethodDefOrRef,
-	pub instantiation: BlobIndex,
-}
-
-#[derive(Debug, Clone, Table)]
-pub struct GenericParamConstraint {
-	pub owner: GenericParamIndex,
-	pub constraint: TypeDefOrRef,
 }

@@ -1,8 +1,9 @@
+use std::collections::HashMap;
+use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Error, ErrorKind, Read, Seek, SeekFrom};
-use crate::raw::heaps::{StringHeap, StringIndex};
+use std::iter::repeat_with;
 use std::mem::{MaybeUninit, size_of};
 use std::slice::from_raw_parts_mut;
-use std::iter::repeat_with;
 
 #[inline]
 pub(crate) unsafe fn read_pod_from_stream<T: Copy>(stream: &mut impl Read) -> std::io::Result<T> {
@@ -79,7 +80,7 @@ macro_rules! impl_from_byte_stream {
 }
 
 pub(crate) use impl_from_byte_stream;
-use crate::schema::ReadError;
+// use crate::schema::ReadError;
 
 macro_rules! impl_from_le_byte_stream {
     ($($ty: ty),*) => {$(
@@ -143,29 +144,9 @@ pub(crate) fn enumerate_set_bits(mut value: u64) -> impl Iterator<Item = usize> 
 	.take_while(|i| *i != usize::MAX)
 }
 
-#[inline]
-pub(crate) fn get_string_from_heap(heap: &StringHeap, idx: StringIndex) -> Result<&str, ReadError> {
-	heap.get(idx).ok_or_else(|| ReadError::InvalidStringToken(idx.into()))
-}
-
-// pub(crate) fn read_compressed_u32(stream: &mut Cursor<&[u8]>) -> Result<u32, Error> {
-// 	let first = u8::read(stream, &())?;
-// 	if first & 0x80 == 0 {
-// 		return Ok(first as u32);
-// 	}
-//
-// 	if first & 0x40 == 0 {
-// 		let first = ((first & !0x80) as u32).overflowing_shl(8).0;
-// 		let second = u8::read(stream, &())? as u32;
-// 		return Ok(first | second);
-// 	}
-//
-// 	let first = ((first & !0xc0) as u32).overflowing_shl(24).0;
-// 	let second = (u8::read(stream, &())? as u32).overflowing_shl(16).0;
-// 	let third = (u8::read(stream, &())? as u32).overflowing_shl(8).0;
-// 	let fourth = u8::read(stream, &())? as u32;
-//
-// 	Ok(first | second | third | fourth)
+// #[inline]
+// pub(crate) fn get_string_from_heap(heap: &StringHeap, idx: StringIndex) -> Result<&str, ReadError> {
+// 	heap.get(idx).ok_or_else(|| ReadError::InvalidStringToken(idx.into()))
 // }
 
 pub(crate) fn read_compressed_u32(stream: &mut Cursor<&[u8]>) -> Result<u32, Error> {
@@ -182,4 +163,20 @@ pub(crate) fn read_compressed_u32(stream: &mut Cursor<&[u8]>) -> Result<u32, Err
 	} else {
 		return Err(Error::new(ErrorKind::InvalidData, format!("Invalid compressed u32 header {:#X}", byte_0)));
 	}
+}
+
+pub(crate) fn display_as_hex(bytes: &[u8], fmt: &mut Formatter<'_>) -> std::fmt::Result {
+	write!(fmt, "[")?;
+	for b in bytes {
+		write!(fmt, "{:X}", b)?;
+	}
+	write!(fmt, "]")
+}
+
+pub(crate) fn display_as_values<K, V: Debug, S>(map: &HashMap<K, V, S>, fmt: &mut Formatter<'_>) -> std::fmt::Result {
+	let mut dbg = fmt.debug_list();
+	for value in map.values() {
+		dbg.entry(value);
+	}
+	dbg.finish()
 }

@@ -1,5 +1,5 @@
 pub mod raw;
 mod utilities;
-pub mod schema;
+pub mod structured;
 
 pub use bumpalo::Bump;

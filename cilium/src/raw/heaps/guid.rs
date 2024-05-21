@@ -1,17 +1,19 @@
 use std::fmt::{Debug, Formatter};
-use crate::raw::heaps::{GuidIndex};
 use std::io::{Error, ErrorKind};
-use owning_ref::ArcRef;
 use std::mem::size_of;
+
 use uuid::Uuid;
 
-pub struct GuidHeap {
-	data: ArcRef<[u8]>,
+use crate::raw::heaps::GuidIndex;
+
+#[derive(Copy, Clone)]
+pub struct GuidHeap<'l> {
+	data: &'l [u8],
 }
 
-impl TryFrom<ArcRef<[u8]>> for GuidHeap {
+impl<'l> TryFrom<&'l [u8]> for GuidHeap<'l> {
 	type Error = Error;
-	fn try_from(data: ArcRef<[u8]>) -> Result<Self, Self::Error> {
+	fn try_from(data: &'l [u8]) -> Result<Self, Self::Error> {
 		match data.len() % size_of::<Uuid>() == 0 {
 			true => Ok(Self { data }),
 			false => Err(ErrorKind::InvalidData.into()),
@@ -20,7 +22,7 @@ impl TryFrom<ArcRef<[u8]>> for GuidHeap {
 }
 
 #[allow(clippy::len_without_is_empty)]
-impl GuidHeap {
+impl GuidHeap<'_> {
 	pub fn len(&self) -> usize {
 		self.data.len() / size_of::<Uuid>()
 	}
@@ -41,7 +43,7 @@ impl GuidHeap {
 	}
 }
 
-impl Debug for GuidHeap {
+impl Debug for GuidHeap<'_> {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
 		f.write_str("GuidHeap ")?;
 		let mut dbg = f.debug_list();

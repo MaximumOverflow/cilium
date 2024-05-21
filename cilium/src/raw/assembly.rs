@@ -2,7 +2,6 @@ use std::io::{Cursor, Error, ErrorKind, Read, Seek, SeekFrom};
 use std::sync::Arc;
 
 use bitflags::bitflags;
-use owning_ref::ArcRef;
 
 use crate::raw::heaps::{BlobHeap, GuidHeap, MetadataHeap, StringHeap, UserStringHeap};
 use crate::raw::heaps::table::TableHeap;
@@ -30,17 +29,17 @@ pub struct CLIHeader {
 impl_from_byte_stream!(CLIHeader);
 
 #[derive(Debug, Clone)]
-pub struct MetadataRoot {
+pub struct MetadataRoot<'l> {
 	major_version: u16,
 	minor_version: u16,
 	version: Arc<str>,
 	flags: u16,
-	heaps: Arc<[Arc<MetadataHeap>]>,
+	heaps: Arc<[Arc<MetadataHeap<'l>>]>,
 }
 
-impl MetadataRoot {
+impl<'l> MetadataRoot<'l> {
 	#[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
-	pub fn read(data: &ArcRef<[u8]>) -> std::io::Result<Self> {
+	pub fn read(data: &'l [u8]) -> std::io::Result<Self> {
 		let mut stream = Cursor::new(data.as_ref());
 		if u32::read(&mut stream, &())? != 0x424A5342 {
 			return Err(ErrorKind::InvalidData.into());
@@ -97,10 +96,10 @@ impl MetadataRoot {
 }
 
 #[derive(Debug)]
-pub struct Assembly {
-	pe_file: PEFile,
+pub struct Assembly<'l> {
+	pe_file: PEFile<'l>,
 	cli_header: CLIHeader,
-	metadata_root: MetadataRoot,
+	metadata_root: MetadataRoot<'l>,
 }
 
 bitflags! {
@@ -114,10 +113,10 @@ bitflags! {
 	}
 }
 
-impl TryFrom<PEFile> for Assembly {
+impl<'l> TryFrom<PEFile<'l>> for Assembly<'l> {
 	type Error = Error;
 	#[cfg_attr(feature = "tracing", tracing::instrument(skip_all, name = "<Assembly as TryFrom<PEFile>>::try_from"))]
-	fn try_from(pe: PEFile) -> Result<Self, Self::Error> {
+	fn try_from(pe: PEFile<'l>) -> Result<Self, Self::Error> {
 		let rva = match &pe.pe_header.image_optional_header {
 			ImageOptionalHeader::None => {
 				return Err(Error::new(
@@ -158,7 +157,7 @@ impl TryFrom<PEFile> for Assembly {
 	}
 }
 
-impl Assembly {
+impl Assembly<'_> {
 	pub fn pe_file(&self) -> &PEFile {
 		&self.pe_file
 	}
@@ -174,8 +173,8 @@ trait GetHeap<T> {
 	fn get_heap(&self) -> Option<&T>;
 }
 
-impl GetHeap<BlobHeap> for MetadataRoot {
-	fn get_heap(&self) -> Option<&BlobHeap> {
+impl<'l> GetHeap<BlobHeap<'l>> for MetadataRoot<'l> {
+	fn get_heap(&self) -> Option<&BlobHeap<'l>> {
 		return self.heaps.iter().find_map(|h| match &**h {
 			MetadataHeap::Blob(h) => Some(h),
 			_ => None,
@@ -183,8 +182,8 @@ impl GetHeap<BlobHeap> for MetadataRoot {
 	}
 }
 
-impl GetHeap<GuidHeap> for MetadataRoot {
-	fn get_heap(&self) -> Option<&GuidHeap> {
+impl<'l> GetHeap<GuidHeap<'l>> for MetadataRoot<'l> {
+	fn get_heap(&self) -> Option<&GuidHeap<'l>> {
 		return self.heaps.iter().find_map(|h| match &**h {
 			MetadataHeap::Guid(h) => Some(h),
 			_ => None,
@@ -192,8 +191,8 @@ impl GetHeap<GuidHeap> for MetadataRoot {
 	}
 }
 
-impl GetHeap<StringHeap> for MetadataRoot {
-	fn get_heap(&self) -> Option<&StringHeap> {
+impl<'l> GetHeap<StringHeap<'l>> for MetadataRoot<'l> {
+	fn get_heap(&self) -> Option<&StringHeap<'l>> {
 		return self.heaps.iter().find_map(|h| match &**h {
 			MetadataHeap::String(h) => Some(h),
 			_ => None,
@@ -201,8 +200,8 @@ impl GetHeap<StringHeap> for MetadataRoot {
 	}
 }
 
-impl GetHeap<UserStringHeap> for MetadataRoot {
-	fn get_heap(&self) -> Option<&UserStringHeap> {
+impl<'l> GetHeap<UserStringHeap<'l>> for MetadataRoot<'l> {
+	fn get_heap(&self) -> Option<&UserStringHeap<'l>> {
 		return self.heaps.iter().find_map(|h| match &**h {
 			MetadataHeap::UserString(h) => Some(h),
 			_ => None,
@@ -210,8 +209,8 @@ impl GetHeap<UserStringHeap> for MetadataRoot {
 	}
 }
 
-impl GetHeap<TableHeap> for MetadataRoot {
-	fn get_heap(&self) -> Option<&TableHeap> {
+impl<'l> GetHeap<TableHeap<'l>> for MetadataRoot<'l> {
+	fn get_heap(&self) -> Option<&TableHeap<'l>> {
 		return self.heaps.iter().find_map(|h| match &**h {
 			MetadataHeap::Table(h) => Some(h),
 			_ => None,

@@ -1,17 +1,16 @@
 use std::fmt::{Debug, Formatter};
 use std::io::{Error, ErrorKind};
 
-use owning_ref::ArcRef;
-
 use crate::raw::heaps::{SizeDebugWrapper, StringIndex};
 
-pub struct StringHeap {
-	data: ArcRef<[u8]>,
+#[derive(Copy, Clone)]
+pub struct StringHeap<'l> {
+	data: &'l [u8],
 }
 
-impl TryFrom<ArcRef<[u8]>> for StringHeap {
+impl<'l> TryFrom<&'l [u8]> for StringHeap<'l> {
 	type Error = Error;
-	fn try_from(data: ArcRef<[u8]>) -> Result<Self, Self::Error> {
+	fn try_from(data: &'l [u8]) -> Result<Self, Self::Error> {
 		match data.as_ref() {
 			[0, ..] => Ok(Self { data }),
 			_ => Err(ErrorKind::InvalidData.into()),
@@ -19,15 +18,15 @@ impl TryFrom<ArcRef<[u8]>> for StringHeap {
 	}
 }
 
-impl StringHeap {
-	pub fn get(&self, idx: StringIndex) -> Option<&str> {
+impl<'l> StringHeap<'l> {
+	pub fn get(&self, idx: StringIndex) -> Option<&'l str> {
 		let slice = self.data.as_ref().get(idx.0..)?;
 		let end = slice.iter().position(|c| *c == 0)?;
 		std::str::from_utf8(&slice[..end]).ok()
 	}
 }
 
-impl Debug for StringHeap {
+impl Debug for StringHeap<'_> {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
 		let mut dbg = f.debug_struct("StringHeap");
 		dbg.field("data", &SizeDebugWrapper(self.data.len()));
@@ -35,17 +34,17 @@ impl Debug for StringHeap {
 	}
 }
 
-pub struct UserStringHeap {
-	data: ArcRef<[u8]>,
+pub struct UserStringHeap<'l> {
+	data: &'l [u8],
 }
 
-impl From<ArcRef<[u8]>> for UserStringHeap {
-	fn from(data: ArcRef<[u8]>) -> Self {
+impl<'l> From<&'l [u8]> for UserStringHeap<'l> {
+	fn from(data: &'l [u8]) -> Self {
 		Self { data }
 	}
 }
 
-impl Debug for UserStringHeap {
+impl Debug for UserStringHeap<'_> {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
 		let mut dbg = f.debug_struct("UserStringHeap");
 		dbg.field("data", &SizeDebugWrapper(self.data.len()));

@@ -1,17 +1,12 @@
 use std::fs::File;
-use std::io::{BufWriter, Cursor};
+use std::io::BufWriter;
 use std::time::SystemTime;
 
 use memory_stats::memory_stats;
 use tracing_flame::FlameLayer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::Registry;
-
-use cilium::Bump;
-use cilium::raw::assembly::Assembly;
-use cilium::raw::FromByteStream;
-use cilium::raw::pe::PEFile;
-use cilium::schema::DataPool;
+use cilium::structured::Context;
 
 fn setup_global_subscriber() -> impl Drop {
 	let file = File::create("./trace.folded").unwrap();
@@ -27,29 +22,17 @@ fn setup_global_subscriber() -> impl Drop {
 
 fn main() {
 	let _guard = setup_global_subscriber();
-	let start = SystemTime::now();
-	let pe = {
-		// let bytes = std::fs::read("System.Private.CoreLib.dll").unwrap();
-		let bytes = std::fs::read("C:/Program Files/dotnet/sdk/8.0.204/Microsoft.Extensions.Primitives.dll").unwrap();
-		let mut cursor = Cursor::new(bytes.as_slice());
-		PEFile::read(&mut cursor, &()).unwrap()
-	};
-	let raw_assembly = Assembly::try_from(pe).unwrap();
-	println! {
-		"Parsing time: {:?}, RAM: {}MB",
-		start.elapsed().unwrap(),
-		memory_stats().unwrap().virtual_mem as f32 / 1000000.0,
-	}
 
 	let start = SystemTime::now();
-	let bump = Bump::new();
-	let pool = DataPool::new(&bump);
-	let assembly = cilium::schema::assembly::Assembly::from_raw_assembly(&pool, &raw_assembly).unwrap();
+	let ctx = Context::new([
+		"C:/Program Files/dotnet/sdk/8.0.204"
+	]);
+	
 	println! {
 		"Schema time: {:?}, RAM: {}MB",
 		start.elapsed().unwrap(),
 		memory_stats().unwrap().virtual_mem as f32 / 1000000.0,
 	}
 
-	println!("{:#X?}", assembly);
+	println!("{:#?}", ctx);
 }

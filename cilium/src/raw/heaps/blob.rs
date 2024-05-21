@@ -1,15 +1,16 @@
-use crate::raw::heaps::{BlobIndex, SizeDebugWrapper};
-use crate::utilities::read_compressed_u32;
 use std::fmt::{Debug, Formatter};
-use owning_ref::ArcRef;
 use std::io::Cursor;
 
-pub struct BlobHeap {
-	data: ArcRef<[u8]>,
+use crate::raw::heaps::{BlobIndex, SizeDebugWrapper};
+use crate::utilities::read_compressed_u32;
+
+#[derive(Copy, Clone)]
+pub struct BlobHeap<'l> {
+	data: &'l [u8],
 }
 
-impl BlobHeap {
-	pub fn get(&self, idx: BlobIndex) -> Option<&[u8]> {
+impl<'l> BlobHeap<'l> {
+	pub fn get(&self, idx: BlobIndex) -> Option<&'l [u8]> {
 		match idx.0 {
 			0 => None,
 			_ => {
@@ -22,13 +23,13 @@ impl BlobHeap {
 	}
 }
 
-impl From<ArcRef<[u8]>> for BlobHeap {
-	fn from(data: ArcRef<[u8]>) -> Self {
+impl<'l> From<&'l [u8]> for BlobHeap<'l> {
+	fn from(data: &'l [u8]) -> Self {
 		Self { data }
 	}
 }
 
-impl Debug for BlobHeap {
+impl Debug for BlobHeap<'_> {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
 		let mut dbg = f.debug_struct("BlobHeap");
 		dbg.field("data", &SizeDebugWrapper(self.data.len()));

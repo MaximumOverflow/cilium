@@ -2,14 +2,13 @@ use std::io::{Cursor, ErrorKind, Read};
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 
-use owning_ref::ArcRef;
 pub use crate::raw::heaps::blob::BlobHeap;
 pub use crate::raw::heaps::guid::GuidHeap;
 pub use crate::raw::heaps::string::{StringHeap, UserStringHeap};
 
 use crate::raw::heaps::table::TableHeap;
 use crate::raw::indices::metadata_token;
-use crate::raw::indices::sizes::{BlobIndexSize, GuidIndexSize, StringIndexSize};
+use crate::raw::indices::sizes::IndexSizes;
 use crate::utilities::{FromByteStream, read_string_from_stream_into};
 
 pub mod table;
@@ -18,17 +17,17 @@ pub mod string;
 pub mod blob;
 
 #[derive(Debug)]
-pub enum MetadataHeap {
-	Blob(BlobHeap),
-	Guid(GuidHeap),
-	Table(TableHeap),
-	String(StringHeap),
-	UserString(UserStringHeap),
+pub enum MetadataHeap<'l> {
+	Blob(BlobHeap<'l>),
+	Guid(GuidHeap<'l>),
+	Table(TableHeap<'l>),
+	String(StringHeap<'l>),
+	UserString(UserStringHeap<'l>),
 }
 
-impl MetadataHeap {
+impl<'l> MetadataHeap<'l> {
 	#[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
-	pub fn read(stream: &mut Cursor<&[u8]>, data: &ArcRef<[u8]>) -> std::io::Result<Arc<Self>> {
+	pub fn read(stream: &mut Cursor<&'l [u8]>, data: &'l [u8]) -> std::io::Result<Arc<Self>> {
 		if stream.get_ref().as_ptr() != data.as_ptr() {
 			return Err(ErrorKind::InvalidInput.into());
 		}
@@ -38,9 +37,7 @@ impl MetadataHeap {
 
 		let mut name = [0u8; 32];
 		let name = read_string_from_stream_into::<4>(stream, name.as_mut_slice())?;
-
-		let range = offset..offset + size;
-		let data = data.clone().map(|s| &s[range]);
+		let data = &data[offset..offset + size];
 
 		match name {
 			"#Blob" => Ok(Arc::new(Self::Blob(BlobHeap::from(data)))),
@@ -57,10 +54,10 @@ impl MetadataHeap {
 pub struct StringIndex(pub usize);
 
 impl FromByteStream for StringIndex {
-	type Deps = StringIndexSize;
-	fn read(stream: &mut Cursor<&[u8]>, size: &Self::Deps) -> std::io::Result<Self> {
+	type Deps = IndexSizes;
+	fn read(stream: &mut Cursor<&[u8]>, sizes: &Self::Deps) -> std::io::Result<Self> {
 		let mut value = 0usize.to_ne_bytes();
-		stream.read_exact(&mut value[..size.0])?;
+		stream.read_exact(&mut value[..sizes.string])?;
 		Ok(Self(usize::from_le_bytes(value)))
 	}
 }
@@ -83,10 +80,10 @@ impl From<StringIndex> for metadata_token::MetadataToken {
 pub struct BlobIndex(pub usize);
 
 impl FromByteStream for BlobIndex {
-	type Deps = BlobIndexSize;
-	fn read(stream: &mut Cursor<&[u8]>, size: &Self::Deps) -> std::io::Result<Self> {
+	type Deps = IndexSizes;
+	fn read(stream: &mut Cursor<&[u8]>, sizes: &Self::Deps) -> std::io::Result<Self> {
 		let mut value = 0usize.to_ne_bytes();
-		stream.read_exact(&mut value[..size.0])?;
+		stream.read_exact(&mut value[..sizes.blob])?;
 		Ok(Self(usize::from_le_bytes(value)))
 	}
 }
@@ -95,10 +92,10 @@ impl FromByteStream for BlobIndex {
 pub struct GuidIndex(pub usize);
 
 impl FromByteStream for GuidIndex {
-	type Deps = GuidIndexSize;
-	fn read(stream: &mut Cursor<&[u8]>, size: &Self::Deps) -> std::io::Result<Self> {
+	type Deps = IndexSizes;
+	fn read(stream: &mut Cursor<&[u8]>, sizes: &Self::Deps) -> std::io::Result<Self> {
 		let mut value = 0usize.to_ne_bytes();
-		stream.read_exact(&mut value[..size.0])?;
+		stream.read_exact(&mut value[..sizes.guid])?;
 		Ok(Self(usize::from_le_bytes(value)))
 	}
 }

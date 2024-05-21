@@ -130,7 +130,7 @@ pub mod coded_index {
 	use crate::raw::heaps::table::TableKind;
 	use std::fmt::{Debug, Formatter};
 	use crate::raw::indices::metadata_token::{MetadataTokenKind, MetadataToken};
-	use crate::raw::indices::sizes::CodedIndexSizes;
+	use crate::raw::indices::sizes::{IndexSizes, SizeOf};
 	use crate::utilities::{FromByteStream, read_compressed_u32};
 
 	macro_rules! define_coded_index {
@@ -167,14 +167,20 @@ pub mod coded_index {
 				}
 
 				impl FromByteStream for $id {
-					type Deps = CodedIndexSizes;
+					type Deps = IndexSizes;
 					fn read(stream: &mut Cursor<&[u8]>, sizes: &Self::Deps) -> std::io::Result<Self> {
-						let size = sizes.0[CodedIndexKind::$id as usize];
+						let size = <IndexSizes as SizeOf<$id>>::size_of(sizes);
 						let mut bytes = 0u32.to_ne_bytes();
 						stream.read_exact(&mut bytes[..size])?;
 						let value = u32::from_le_bytes(bytes);
 						Self::try_from(value).map_err(|_| ErrorKind::InvalidData.into())
 					}
+				}
+
+				impl SizeOf<$id> for IndexSizes {
+					fn size_of(&self) -> usize {
+        				self.coded[CodedIndexKind::$id as usize]
+   					}
 				}
 
 				impl $id {
@@ -307,41 +313,35 @@ pub mod coded_index {
 
 pub(crate) mod sizes {
 	use std::sync::Arc;
+	use crate::raw::heaps::{BlobIndex, GuidIndex, StringIndex};
 
 	use crate::raw::indices::coded_index::CodedIndexKind;
 
 	#[derive(Debug)]
 	pub struct IndexSizes {
-		pub guid: GuidIndexSize,
-		pub blob: BlobIndexSize,
-		pub string: StringIndexSize,
-		pub coded: CodedIndexSizes,
-		pub tables: TableIndexSizes,
+		pub guid: usize,
+		pub blob: usize,
+		pub string: usize,
+		pub coded: [usize; 14],
+		pub tables: [usize; 55],
 	}
 
-	#[derive(Debug)]
-	pub struct GuidIndexSize(pub(crate) usize);
-	#[derive(Debug)]
-	pub struct BlobIndexSize(pub(crate) usize);
-	#[derive(Debug)]
-	pub struct StringIndexSize(pub(crate) usize);
-	#[derive(Debug)]
-	pub struct CodedIndexSizes(pub(crate) [usize; 14]);
-	#[derive(Debug)]
-	pub struct TableIndexSizes(pub(crate) [usize; 55]);
+	pub trait SizeOf<T> {
+		fn size_of(&self) -> usize;
+	}
 
 	impl IndexSizes {
 		pub fn new(heap_sizes: u8, table_lens: &[u32; 55]) -> Arc<Self> {
 			let sizes = Self {
-				blob: BlobIndexSize(2 + 2 * ((heap_sizes & 0x4) != 0) as usize),
-				guid: GuidIndexSize(2 + 2 * ((heap_sizes & 0x2) != 0) as usize),
-				string: StringIndexSize(2 + 2 * ((heap_sizes & 0x1) != 0) as usize),
+				blob: 2 + 2 * ((heap_sizes & 0x4) != 0) as usize,
+				guid: 2 + 2 * ((heap_sizes & 0x2) != 0) as usize,
+				string: 2 + 2 * ((heap_sizes & 0x1) != 0) as usize,
 				tables: {
 					let mut tables = [0; 55];
 					for (size, len) in tables.iter_mut().zip(table_lens) {
 						*size = 2 + 2 * (*len > 65536) as usize
 					}
-					TableIndexSizes(tables)
+					tables
 				},
 				coded: unsafe {
 					let mut coded = [0; 14];
@@ -349,52 +349,52 @@ pub(crate) mod sizes {
 						let kind: CodedIndexKind = std::mem::transmute(i as u32);
 						coded[i] = kind.get_size(table_lens);
 					}
-					CodedIndexSizes(coded)
+					coded
 				}
 			};
 			Arc::new(sizes)
 		}
 	}
 	impl AsRef<()> for IndexSizes {
-		#[inline(always)]
+		#[inline]
 		fn as_ref(&self) -> &() {
 			&()
 		}
 	}
 	impl AsRef<IndexSizes> for IndexSizes {
-		#[inline(always)]
-		fn as_ref(&self) -> &IndexSizes {
+		#[inline]
+		fn as_ref(&self) -> &Self {
 			self
 		}
 	}
-	impl AsRef<GuidIndexSize> for IndexSizes {
-		#[inline(always)]
-		fn as_ref(&self) -> &GuidIndexSize {
-			&self.guid
+	impl SizeOf<()> for IndexSizes {
+		#[inline]
+		fn size_of(&self) -> usize {
+			0
 		}
 	}
-	impl AsRef<BlobIndexSize> for IndexSizes {
-		#[inline(always)]
-		fn as_ref(&self) -> &BlobIndexSize {
-			&self.blob
+	impl<const S: usize> SizeOf<[u8; S]> for IndexSizes {
+		#[inline]
+		fn size_of(&self) -> usize {
+			S
 		}
 	}
-	impl AsRef<StringIndexSize> for IndexSizes {
-		#[inline(always)]
-		fn as_ref(&self) -> &StringIndexSize {
-			&self.string
+	impl SizeOf<GuidIndex> for IndexSizes {
+		#[inline]
+		fn size_of(&self) -> usize {
+			self.guid
 		}
 	}
-	impl AsRef<CodedIndexSizes> for IndexSizes {
-		#[inline(always)]
-		fn as_ref(&self) -> &CodedIndexSizes {
-			&self.coded
+	impl SizeOf<BlobIndex> for IndexSizes {
+		#[inline]
+		fn size_of(&self) -> usize {
+			self.blob
 		}
 	}
-	impl AsRef<TableIndexSizes> for IndexSizes {
-		#[inline(always)]
-		fn as_ref(&self) -> &TableIndexSizes {
-			&self.tables
+	impl SizeOf<StringIndex> for IndexSizes {
+		#[inline]
+		fn size_of(&self) -> usize {
+			self.string
 		}
 	}
 }

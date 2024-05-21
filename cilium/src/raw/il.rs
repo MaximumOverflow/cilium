@@ -625,7 +625,7 @@ impl<'l> MethodBody<'l> {
 					let Ok(StandAloneSig(local_var_token)) = local_var_token.try_into() else {
 						return Err(Error::new(ErrorKind::InvalidData, "Invalid metadata token"));
 					};
-					let sig = signatures.rows()[local_var_token - 1].signature;
+					let sig = signatures.get(local_var_token - 1).unwrap().signature;
 					let Some(sig) = blob_heap.get(sig) else {
 						return Err(Error::new(ErrorKind::InvalidData, "Invalid blob index"));
 					};
