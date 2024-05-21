@@ -10,6 +10,7 @@ pub enum ReadError {
 	InvalidMethodRVA(u32),
 	InvalidStringToken(MetadataToken),
 	InvalidMethodCode(MetadataToken, Box<dyn Error>),
+	InvalidTypeSignature,
 
 	#[cfg(feature = "memmap2")]
 	MemMapError(memmap2::Error),

@@ -27,7 +27,7 @@ pub fn derive(tokens: proc_macro::TokenStream) -> TokenStream {
 		if ident == "print_rows" {
 			print = Some(quote! {
 				#[cfg(debug_assertions)]
-				println!("{:X?}", row);
+				println!("[{:#X}] {:X?}", i + 1, row);
 			});
 		}
 		if ident != "read_with" {

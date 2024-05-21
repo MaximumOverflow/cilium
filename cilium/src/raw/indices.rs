@@ -194,11 +194,12 @@ pub mod coded_index {
 				}
 
 				$(
-					impl From<$id> for crate::raw::indices::metadata_token::$variant {
-						fn from(value: $id) -> Self {
+					impl TryFrom<$id> for crate::raw::indices::metadata_token::$variant {
+						type Error = ();
+						fn try_from(value: $id) -> Result<Self, Self::Error> {
 							use crate::raw::indices::metadata_token::*;
 							let token = MetadataToken::from(value);
-							$variant::try_from(token).unwrap()
+							$variant::try_from(token)
 						}
 					}
 				)*

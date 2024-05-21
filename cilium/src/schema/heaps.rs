@@ -6,11 +6,12 @@ use fxhash::FxHashMap;
 use std::ops::Deref;
 use bumpalo::Bump;
 use crate::raw::heaps::BlobIndex;
+use crate::schema::r#type::TypePool;
 
 pub(crate) struct StringHeap<'l> {
 	bump: &'l Bump,
 	offset: usize,
-	vec: Vec<InternedString<'l>>,
+	vec: Vec<(&'l str, MetadataToken)>,
 	map: FxHashMap<&'l str, usize>,
 }
 
@@ -26,9 +27,9 @@ impl<'l> StringHeap<'l> {
 		heap
 	}
 
-	pub fn intern(&mut self, str: &str) -> InternedString<'l> {
+	pub fn intern(&mut self, str: &str) -> &'l str {
 		if let Some(idx) = self.map.get(str) {
-			return self.vec[*idx];
+			return self.vec[*idx].0;
 		}
 
 		let (interned, offset) = unsafe { // Allocate str + zero termination character
@@ -44,10 +45,9 @@ impl<'l> StringHeap<'l> {
 		};
 
 		let idx = self.vec.len();
-		let string = InternedString(interned, StringToken(offset).into());
-		self.vec.push(string);
+		self.vec.push((interned, StringToken(offset).into()));
 		self.map.insert(interned, idx);
-		string
+		interned
 	}
 }
 
@@ -62,31 +62,6 @@ impl Debug for StringHeap<'_> {
 			dbg.field(&name, &str.0);
 		}
 		dbg.finish()
-	}
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub struct InternedString<'l>(&'l str, MetadataToken);
-
-impl Deref for InternedString<'_> {
-	type Target = str;
-	#[inline]
-	fn deref(&self) -> &Self::Target {
-		self.0
-	}
-}
-
-impl Display for InternedString<'_> {
-	#[inline]
-	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-		Display::fmt(self.0, f)
-	}
-}
-
-impl InternedString<'_> {
-	#[inline]
-	pub fn metadata_token(&self) -> MetadataToken {
-		self.1
 	}
 }
 
@@ -165,5 +140,27 @@ impl InternedBlob<'_> {
 	#[inline]
 	pub fn index(&self) -> BlobIndex {
 		self.1
+	}
+}
+
+pub struct DataPool<'l> {
+	bump: &'l Bump,
+	types: TypePool<'l>,
+}
+
+impl<'l> DataPool<'l> {
+	pub fn new(bump: &'l Bump) -> Self {
+		Self {
+			bump,
+			types: TypePool::new(bump),
+		}
+	}
+
+	pub(crate) fn bump(&self) -> &'l Bump {
+		self.bump
+	}
+
+	pub(crate) fn types(&self) -> &TypePool<'l> {
+		&self.types
 	}
 }

@@ -638,7 +638,7 @@ impl<'l> MethodBody<'l> {
 					let count = read_compressed_u32(&mut stream)? as usize;
 
 					locals.reserve_exact(count);
-					for i in 0..count {
+					for _ in 0..count {
 						let signature = TypeSignature::read(&mut stream, index_sizes)?;
 						locals.push(signature);
 					}
@@ -681,6 +681,11 @@ impl<'l> TypeSignature<'l> {
 		let start = stream.position() as usize;
 		let _ = TypeSignatureTag::read(stream, index_sizes)?;
 		Ok(Self(&stream.get_ref()[start..stream.position() as usize], index_sizes.clone()))
+	}
+
+	pub fn as_tags_tree(&self) -> TypeSignatureTag {
+		let mut stream = Cursor::new(self.0);
+		TypeSignatureTag::read(&mut stream, &self.1).unwrap()
 	}
 }
 
@@ -802,6 +807,10 @@ impl<'l> GenericInst<'l> {
 		let ty = TypeSignature::read(stream, index_sizes)?;
 		let seq = TypeSignatureSequence::read(stream, index_sizes)?;
 		Ok(Self(ty, seq))
+	}
+
+	pub fn ty(&self) -> &TypeSignature {
+		&self.0
 	}
 
 	pub fn params(&self) -> impl Iterator<Item=TypeSignatureTag<'l>> + '_ {

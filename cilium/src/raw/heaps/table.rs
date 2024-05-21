@@ -139,7 +139,7 @@ impl TryFrom<ArcRef<[u8]>> for TableHeap {
 				TableKind::AssemblyRefProcessor => 	 todo!("Unimplemented table AssemblyRefProcessor"),
 				TableKind::AssemblyRefOS => 		 todo!("Unimplemented table AssemblyRefOS"),
 				TableKind::File => 					 todo!("Unimplemented table File"),
-				TableKind::ExportedType => 			 todo!("Unimplemented table ExportedType"),
+				TableKind::ExportedType => 			 Arc::new(ExportedTypeTable::read(&mut stream, &idx_sizes, len)?),
 				TableKind::ManifestResource => 		 Arc::new(ManifestResourceTable::read(&mut stream, &idx_sizes, len)?),
 				TableKind::NestedClass => 			 Arc::new(NestedClassTable::read(&mut stream, &idx_sizes, len)?),
 				TableKind::GenericParam => 			 Arc::new(GenericParamTable::read(&mut stream, &idx_sizes, len)?),
@@ -651,6 +651,35 @@ pub struct AssemblyRef {
 	pub name: StringIndex,
 	pub culture: StringIndex,
 	pub hash_value: BlobIndex,
+}
+
+#[derive(Debug, Clone, Table)]
+#[read_with(ExportedTypeTable::read_impl)]
+pub struct ExportedType {
+	pub flags: TypeAttributes,
+	pub type_def: TypeDefIndex,
+	pub name: StringIndex,
+	pub namespace: StringIndex,
+	pub implementation: Implementation,
+}
+
+impl ExportedTypeTable {
+	fn read_impl(stream: &mut Cursor<&[u8]>, idx_sizes: &IndexSizes, len: usize) -> std::io::Result<Self> {
+		let mut rows = Vec::with_capacity(len);
+		for _ in 0..len {
+			let row = ExportedType {
+				flags: <TypeAttributes>::read(stream, idx_sizes.as_ref())?,
+				// This index isn't variable length because the format is not consistent.
+				// P.S. Fuck you Microsoft.
+				type_def: TypeDefIndex(u32::read(stream, &())? as usize),
+				name: <StringIndex>::read(stream, idx_sizes.as_ref())?,
+				namespace: <StringIndex>::read(stream, idx_sizes.as_ref())?,
+				implementation: <Implementation>::read(stream, idx_sizes.as_ref())?,
+			};
+			rows.push(row)
+		}
+		Ok(Self { rows })
+	}
 }
 
 bitflags! {
