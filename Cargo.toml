@@ -1,3 +1,12 @@
 [workspace]
 resolver = "2"
 members = ["cilium", "cilium-derive", "experiments"]
+
+[profile.production]
+inherits = "release"
+opt-level = 3
+lto = true
+panic = "abort"
+debug = false
+codegen-units = 1
+strip = true

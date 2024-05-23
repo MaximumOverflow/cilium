@@ -8,6 +8,7 @@ use paste::paste;
 use cilium_derive::FromRepr;
 
 use crate::raw::heaps::{BlobIndex, GuidIndex, StringIndex};
+use crate::raw::heaps::table::private::GetTable;
 use crate::raw::indices::coded_index::*;
 use crate::raw::indices::sizes::{IndexSizes, SizeOf};
 use crate::utilities::FromByteStream;
@@ -46,6 +47,253 @@ macro_rules! define_flags {
 		impl_from_byte_stream!($BitFlags);
 
 		define_flags!($($t)*);
+	};
+}
+
+macro_rules! size_of {
+    (u8, $sizes: expr) => { 1 };
+    (u16, $sizes: expr) => { 2 };
+    (u32, $sizes: expr) => { 4 };
+    (u64, $sizes: expr) => { 8 };
+    (GuidIndex, $sizes: expr) => { $sizes.guid };
+    (BlobIndex, $sizes: expr) => { $sizes.blob };
+    (StringIndex, $sizes: expr) => { $sizes.string };
+    ($ty: ty, $sizes: expr) => { <IndexSizes as SizeOf<$ty>>::size_of($sizes) };
+}
+
+macro_rules! read_fn {
+	($row: ident, { $($field: ident: $ty: ty $(=> |$($args:ident),*| { $($stmts:tt)* })? ),* }) => {
+		fn read(cursor: &mut Cursor<&[u8]>, idx_sizes: &IndexSizes) -> std::io::Result<$row> {
+			Ok(
+				$row {
+					$(
+						$field: read_fn!(cursor, idx_sizes, { $field: $ty } $(=> |$($args),*| { $($stmts)* })? )
+					),*
+				}
+			)
+		}
+	};
+	($cursor: ident, $idx_sizes: ident, { $field: ident: $ty: ty }) => {
+		<$ty>::read($cursor, $idx_sizes.as_ref())?
+	};
+    ($cursor: ident, $idx_sizes: ident, { $field: ident: $ty: ty } => |$($args:ident),*| { $($stmts:tt)* }) => {
+		{
+			let fld_read = |$($args),*| { $($stmts)* };
+			fld_read($cursor, $idx_sizes)?
+		}
+	};
+}
+
+macro_rules! decl_tables {
+    (
+		[$($enum_name: ident = $enum_discriminant: literal),*]
+		$(
+			$vis: vis struct $row: ident: $discriminant: literal {
+				$(
+					$fld_vis: vis $field: ident: $ty: ty $(=> |$($args:ident),*| { $($stmts:tt)* })?,
+				)*
+			}
+		)*
+	)=> {
+		paste! {
+			$(
+				#[derive(Copy, Clone)]
+				#[allow(dead_code)]
+				$vis struct $row {
+					$(
+						$fld_vis $field: $ty,
+					)*
+				}
+
+				impl $row {
+					pub fn calc_size(sizes: &IndexSizes) -> usize {
+						let fields = [$(size_of!($ty, sizes)),*];
+						fields.into_iter().sum()
+					}
+				}
+
+				impl FromByteStream for $row {
+					type Deps = IndexSizes;
+					fn read(stream: &mut Cursor<&[u8]>, deps: &Self::Deps) -> std::io::Result<Self> {
+						read_fn! {
+							$row,
+							{ $($field: $ty $(=> |$($args),*| { $($stmts)* })? ),* }
+						}
+						read(stream, deps)
+					}
+				}
+
+				#[derive(Clone)]
+				#[derive(Derivative)] // Temporary
+				#[derivative(Debug)]
+				$vis struct [<$row Table>]<'l> {
+					len: usize,
+					row_size: usize,
+					#[derivative(Debug="ignore")]
+					data: &'l [u8],
+					#[derivative(Debug="ignore")]
+					idx_sizes: Arc<IndexSizes>,
+				}
+
+				impl<'l> [<$row Table>]<'l> {
+					#[inline]
+					pub const fn len(&self) -> usize {
+						self.len
+					}
+
+					#[inline]
+					pub fn rows(&'l self) -> impl Iterator<Item=std::io::Result<$row>> + 'l {
+						let mut cursor = Cursor::new(self.data);
+						(0..self.len).map(move |_| $row::read(&mut cursor, &self.idx_sizes))
+					}
+
+					pub fn get(&'l self, idx: usize) -> std::io::Result<$row> {
+						let offset = self.row_size * idx;
+						let Some(data) = self.data.get(offset..offset+self.row_size) else {
+							return Err(std::io::ErrorKind::InvalidInput.into());
+						};
+						let mut cursor = Cursor::new(data);
+						$row::read(&mut cursor, &self.idx_sizes)
+					}
+				}
+
+				#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+				$vis struct [<$row Index>](usize);
+
+				impl [<$row Index>] {
+					#[inline]
+					pub const fn new(idx: Option<usize>) -> Self {
+						match idx {
+							None => Self(0),
+							Some(idx) => Self(idx + 1),
+						}
+					}
+
+					#[inline]
+					pub const fn idx(&self) -> Option<usize> {
+						match self.0 {
+							0 => None,
+							_ => Some(self.0 - 1),
+						}
+					}
+				}
+
+				impl SizeOf<[<$row Index>]> for IndexSizes {
+					fn size_of(&self) -> usize {
+						self.tables[TableKind::$row as usize]
+					}
+				}
+
+				impl FromByteStream for [<$row Index>] {
+					type Deps = IndexSizes;
+					fn read(stream: &mut Cursor<&[u8]>, deps: &Self::Deps) -> std::io::Result<Self> {
+						let table_size = <IndexSizes as SizeOf<[<$row Index>]>>::size_of(deps);
+						let size = 2 + 2 * (table_size > 65536) as usize;
+						let mut value = 0usize.to_ne_bytes();
+						stream.read_exact(&mut value[..size])?;
+						Ok(Self(usize::from_le_bytes(value)))
+					}
+				}
+
+				impl<'l> GetTable<$row> for TableHeap<'l> {
+					type Table = [<$row Table>]<'l>;
+					fn get_table(&self) -> Option<&Self::Table> {
+						self.tables.iter().find_map(|t| match t {
+							Table::$row(t) => Some(t),
+							_ => None,
+						})
+					}
+				}
+			)*
+
+			#[derive(Debug, Clone)]
+			pub enum Table<'l> {
+				$($row([<$row Table>]<'l>)),*
+			}
+
+			#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, FromRepr)]
+			pub enum TableKind {
+				$($row = $discriminant,)*
+				$($enum_name = $enum_discriminant,)*
+			}
+
+			impl<'l> TryFrom<&'l [u8]> for TableHeap<'l> {
+				type Error = std::io::Error;
+				#[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
+				fn try_from(value: &'l [u8]) -> Result<Self, Self::Error> {
+					#[repr(C)]
+					#[derive(Copy, Clone)]
+					struct Header {
+						reserved_0: u32,
+						major_version: u8,
+						minor_version: u8,
+						heap_sizes: u8,
+						reserved_1: u8,
+						valid: u64,
+						sorted: u64,
+					}
+
+					impl_from_byte_stream!(Header);
+
+					let mut stream = Cursor::new(value);
+					let Header {
+						heap_sizes,
+						valid,
+						minor_version,
+						major_version,
+						..
+					} = Header::read(&mut stream, &())?;
+
+					let table_count = valid.count_ones() as usize;
+					let mut table_sizes = vec![0u32; 55];
+
+					for i in enumerate_set_bits(valid) {
+						let mut bytes = 0u32.to_ne_bytes();
+						stream.read_exact(&mut bytes)?;
+						table_sizes[i] = u32::from_le_bytes(bytes);
+					}
+
+					let mut offset = stream.position() as usize;
+					let idx_sizes = IndexSizes::new(heap_sizes, table_sizes.as_slice().try_into().unwrap());
+
+					let mut tables: Vec<Table> = Vec::with_capacity(table_count);
+					for i in enumerate_set_bits(valid) {
+						let len = table_sizes[i] as usize;
+						let Some(kind) = TableKind::from_repr(i) else {
+							return Err(std::io::ErrorKind::InvalidData.into());
+						};
+
+						#[rustfmt::skip]
+						tables.push(match kind {
+							$(
+								TableKind::$row => Table::$row({
+									let row_size = $row::calc_size(&idx_sizes);
+									let table_size = row_size * len;
+									let Some(data) = value.get(offset..offset+table_size) else {
+										return Err(std::io::ErrorKind::InvalidData.into());
+									};
+									offset += table_size;
+
+									[<$row Table>] {
+										len,
+										row_size,
+										data,
+										idx_sizes: idx_sizes.clone(),
+									}
+								}),
+							)*
+							_ => todo!("Unimplemented table {kind:?}")
+						});
+					}
+
+					Ok(Self {
+						major_version,
+						minor_version,
+						tables,
+					})
+				}
+			}
+		}
 	};
 }
 
@@ -237,253 +485,6 @@ define_flags! {
 	pub struct FileAttributes: u32 {
 		//TODO
 	}
-}
-
-
-macro_rules! size_of {
-    (u8, $sizes: expr) => { 1 };
-    (u16, $sizes: expr) => { 2 };
-    (u32, $sizes: expr) => { 4 };
-    (u64, $sizes: expr) => { 8 };
-    (GuidIndex, $sizes: expr) => { $sizes.guid };
-    (BlobIndex, $sizes: expr) => { $sizes.blob };
-    (StringIndex, $sizes: expr) => { $sizes.string };
-    ($ty: ty, $sizes: expr) => { <IndexSizes as SizeOf<$ty>>::size_of($sizes) };
-}
-
-macro_rules! read_fn {
-	($row: ident, { $($field: ident: $ty: ty $(=> |$($args:ident),*| { $($stmts:tt)* })? ),* }) => {
-		fn read(cursor: &mut Cursor<&[u8]>, idx_sizes: &IndexSizes) -> std::io::Result<$row> {
-			Ok(
-				$row {
-					$(
-						$field: read_fn!(cursor, idx_sizes, { $field: $ty } $(=> |$($args),*| { $($stmts)* })? )
-					),*
-				}
-			)
-		}
-	};
-	($cursor: ident, $idx_sizes: ident, { $field: ident: $ty: ty }) => {
-		<$ty>::read($cursor, $idx_sizes.as_ref())?
-	};
-    ($cursor: ident, $idx_sizes: ident, { $field: ident: $ty: ty } => |$($args:ident),*| { $($stmts:tt)* }) => {
-		{
-			let fld_read = |$($args),*| { $($stmts)* };
-			fld_read($cursor, $idx_sizes)?
-		}
-	};
-}
-
-macro_rules! decl_tables {
-    (
-		[$($enum_name: ident = $enum_discriminant: literal),*]
-		$(
-			$vis: vis struct $row: ident: $discriminant: literal {
-				$(
-					$fld_vis: vis $field: ident: $ty: ty $(=> |$($args:ident),*| { $($stmts:tt)* })?,
-				)*
-			}
-		)*
-	)=> {
-		paste! {
-			$(
-				#[derive(Copy, Clone)]
-				#[allow(dead_code)]
-				$vis struct $row {
-					$(
-						$fld_vis $field: $ty,
-					)*
-				}
-
-				impl $row {
-					pub fn calc_size(sizes: &IndexSizes) -> usize {
-						let fields = [$(size_of!($ty, sizes)),*];
-						fields.into_iter().sum()
-					}
-				}
-
-				impl FromByteStream for $row {
-					type Deps = IndexSizes;
-					fn read(stream: &mut Cursor<&[u8]>, deps: &Self::Deps) -> std::io::Result<Self> {
-						read_fn! {
-							$row,
-							{ $($field: $ty $(=> |$($args),*| { $($stmts)* })? ),* }
-						}
-						read(stream, deps)
-					}
-				}
-
-				#[derive(Clone)]
-				#[derive(Derivative)] // Temporary
-				#[derivative(Debug)]
-				$vis struct [<$row Table>]<'l> {
-					len: usize,
-					row_size: usize,
-					#[derivative(Debug="ignore")]
-					data: &'l [u8],
-					#[derivative(Debug="ignore")]
-					idx_sizes: Arc<IndexSizes>,
-				}
-
-				impl<'l> [<$row Table>]<'l> {
-					#[inline]
-					pub const fn len(&self) -> usize {
-						self.len
-					}
-
-					#[inline]
-					pub fn rows(&'l self) -> impl Iterator<Item=std::io::Result<$row>> + 'l {
-						let mut cursor = Cursor::new(self.data);
-						(0..self.len).map(move |_| $row::read(&mut cursor, &self.idx_sizes))
-					}
-
-					pub fn get(&'l self, idx: usize) -> std::io::Result<$row> {
-						let offset = self.row_size * idx;
-						let Some(data) = self.data.get(offset..offset+self.row_size) else {
-							return Err(std::io::ErrorKind::InvalidInput.into());
-						};
-						let mut cursor = Cursor::new(data);
-						$row::read(&mut cursor, &self.idx_sizes)
-					}
-				}
-
-				#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-				$vis struct [<$row Index>](usize);
-
-				impl [<$row Index>] {
-					#[inline]
-					pub const fn new(idx: Option<usize>) -> Self {
-						match idx {
-							None => Self(0),
-							Some(idx) => Self(idx + 1),
-						}
-					}
-
-					#[inline]
-					pub const fn idx(&self) -> Option<usize> {
-						match self.0 {
-							0 => None,
-							_ => Some(self.0 - 1),
-						}
-					}
-				}
-
-				impl SizeOf<[<$row Index>]> for IndexSizes {
-					fn size_of(&self) -> usize {
-						self.tables[TableKind::$row as usize]
-					}
-				}
-
-				impl FromByteStream for [<$row Index>] {
-					type Deps = IndexSizes;
-					fn read(stream: &mut Cursor<&[u8]>, deps: &Self::Deps) -> std::io::Result<Self> {
-						let table_size = <IndexSizes as SizeOf<[<$row Index>]>>::size_of(deps);
-						let size = 2 + 2 * (table_size > 65536) as usize;
-						let mut value = 0usize.to_ne_bytes();
-						stream.read_exact(&mut value[..size])?;
-						Ok(Self(usize::from_le_bytes(value)))
-					}
-				}
-
-				impl<'l> GetTable<[<$row Table>]<'l>> for TableHeap<'l> {
-					fn get_table(&self) -> Option<&[<$row Table>]<'l>> {
-						self.tables.iter().find_map(|t| match t {
-							Table::$row(t) => Some(t),
-							_ => None,
-						})
-					}
-				}
-			)*
-
-			#[derive(Debug, Clone)]
-			pub enum Table<'l> {
-				$($row([<$row Table>]<'l>)),*
-			}
-
-			#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, FromRepr)]
-			pub enum TableKind {
-				$($row = $discriminant,)*
-				$($enum_name = $enum_discriminant,)*
-			}
-
-			impl<'l> TryFrom<&'l [u8]> for TableHeap<'l> {
-				type Error = std::io::Error;
-				#[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
-				fn try_from(value: &'l [u8]) -> Result<Self, Self::Error> {
-					#[repr(C)]
-					#[derive(Copy, Clone)]
-					struct Header {
-						reserved_0: u32,
-						major_version: u8,
-						minor_version: u8,
-						heap_sizes: u8,
-						reserved_1: u8,
-						valid: u64,
-						sorted: u64,
-					}
-
-					impl_from_byte_stream!(Header);
-
-					let mut stream = Cursor::new(value);
-					let Header {
-						heap_sizes,
-						valid,
-						minor_version,
-						major_version,
-						..
-					} = Header::read(&mut stream, &())?;
-
-					let table_count = valid.count_ones() as usize;
-					let mut table_sizes = vec![0u32; 55];
-
-					for i in enumerate_set_bits(valid) {
-						let mut bytes = 0u32.to_ne_bytes();
-						stream.read_exact(&mut bytes)?;
-						table_sizes[i] = u32::from_le_bytes(bytes);
-					}
-
-					let mut offset = stream.position() as usize;
-					let idx_sizes = IndexSizes::new(heap_sizes, table_sizes.as_slice().try_into().unwrap());
-
-					let mut tables: Vec<Table> = Vec::with_capacity(table_count);
-					for i in enumerate_set_bits(valid) {
-						let len = table_sizes[i] as usize;
-						let Some(kind) = TableKind::from_repr(i) else {
-							return Err(std::io::ErrorKind::InvalidData.into());
-						};
-
-						#[rustfmt::skip]
-						tables.push(match kind {
-							$(
-								TableKind::$row => Table::$row({
-									let row_size = $row::calc_size(&idx_sizes);
-									let table_size = row_size * len;
-									let Some(data) = value.get(offset..offset+table_size) else {
-										return Err(std::io::ErrorKind::InvalidData.into());
-									};
-									offset += table_size;
-
-									[<$row Table>] {
-										len,
-										row_size,
-										data,
-										idx_sizes: idx_sizes.clone(),
-									}
-								}),
-							)*
-							_ => todo!("Unimplemented table {kind:?}")
-						});
-					}
-
-					Ok(Self {
-						major_version,
-						minor_version,
-						tables,
-					})
-				}
-			}
-		}
-	};
 }
 
 decl_tables! {
@@ -742,10 +743,6 @@ pub struct TableHeap<'l> {
 	tables: Vec<Table<'l>>,
 }
 
-trait GetTable<T> {
-	fn get_table(&self) -> Option<&T>;
-}
-
 impl<'l> TableHeap<'l> {
 	pub fn major_version(&self) -> u8 {
 		self.major_version
@@ -754,7 +751,14 @@ impl<'l> TableHeap<'l> {
 		self.minor_version
 	}
 	#[allow(private_bounds)]
-	pub fn get_table<T>(&self) -> Option<&T> where Self: GetTable<T> {
+	pub fn get_table<T>(&self) -> Option<&<Self as GetTable<T>>::Table> where Self: GetTable<T> {
 		GetTable::get_table(self)
+	}
+}
+
+mod private {
+	pub trait GetTable<T> {
+		type Table;
+		fn get_table(&self) -> Option<&Self::Table>;
 	}
 }

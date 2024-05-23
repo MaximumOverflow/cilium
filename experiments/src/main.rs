@@ -24,9 +24,15 @@ fn main() {
 	let _guard = setup_global_subscriber();
 
 	let start = SystemTime::now();
-	let ctx = Context::new([
-		"C:/Program Files/dotnet/sdk/8.0.204"
+	let mut ctx = Context::new([
+		"C:/Program Files/dotnet/sdk/8.0.101",
+		"C:/Program Files/dotnet/shared/Microsoft.NETCore.App/8.0.1",
+		"C:/Program Files/dotnet/shared/Microsoft.WindowsDesktop.App/8.0.1"
 	]);
+
+	let assembly = ctx.load_assembly(
+		"C:/Program Files/dotnet/sdk/8.0.101/NuGet.Protocol.dll"
+	).unwrap();
 	
 	println! {
 		"Schema time: {:?}, RAM: {}MB",

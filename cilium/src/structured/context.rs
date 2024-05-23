@@ -1,87 +1,155 @@
+use std::collections::HashMap;
+use std::fmt::{Debug, Formatter};
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
+
 use bumpalo::Bump;
 use derivative::Derivative;
 use fxhash::FxHashMap;
-use crate::raw::assembly::Assembly as RawAssembly;
-use crate::raw::heaps::{BlobHeap, StringHeap};
-use crate::raw::heaps::table::{AssemblyTable, TableHeap};
-use crate::raw::pe::PEFile;
-use crate::structured::assembly::{Assembly, AssemblyName};
+use uuid::Version;
+use crate::raw::heaps::table::AssemblyFlags;
+
+use crate::structured::assembly::{Assembly, AssemblyLoadingError, AssemblyName, AssemblyVersion};
 
 #[derive(Derivative)]
 #[derivative(Debug)]
 pub struct Context<'l> {
-	#[derivative(Debug="ignore")]
-	bump: Bump,
-	#[derivative(Debug(format_with="crate::utilities::display_as_values"))]
-	assembly_files: FxHashMap<&'l AssemblyName<'l>, PathBuf>,
-	#[derivative(Debug(format_with="crate::utilities::display_as_values"))]
+	#[derivative(Debug = "ignore")]
+	bump: Pin<Box<Bump>>,
+	#[derivative(Debug(format_with="fmt_reachable_assemblies"))]
+	reachable_assemblies: FxHashMap<&'l AssemblyName<'l>, PathBuf>,
+	#[derivative(Debug(format_with="crate::utilities::fmt_debug_values"))]
 	loaded_assemblies: FxHashMap<&'l AssemblyName<'l>, &'l Assembly<'l>>,
+	#[derivative(Debug = "ignore")]
+	resolver: Box<dyn AssemblyResolver>,
 }
 
 impl<'l> Context<'l> {
 	pub fn new<T: AsRef<Path>>(search_paths: impl IntoIterator<Item=T>) -> Self {
 		let mut ctx = Context {
-			bump: Default::default(),
-			assembly_files: Default::default(),
+			bump: Pin::new(Box::new(Bump::new())),
+			reachable_assemblies: Default::default(),
 			loaded_assemblies: Default::default(),
+			resolver: Box::new(DefaultAssemblyResolver),
 		};
 
-		for dir in search_paths {
-			let dir = dir.as_ref();
-			let Ok(dir) = std::fs::read_dir(dir) else { continue };
+		fn add_paths(ctx: &mut Context, path: &Path) {
+			let Ok(dir) = std::fs::read_dir(path) else { return };
 			for entry in dir {
 				let Ok(entry) = entry else { continue };
+				let Ok(metadata) = entry.metadata() else { continue };
+
 				let path = entry.path();
-				let Some(extension) = path.extension() else { continue };
-				let extension = extension.to_string_lossy();
-				match extension.as_ref() {
-					"dll" => ctx.try_add_assembly_path(path),
-					_ => continue,
+
+				if metadata.is_dir() {
+					add_paths(ctx, &path);
+				}
+				else {
+					let Some(extension) = path.extension() else { continue };
+					let extension = extension.to_string_lossy();
+					match extension.as_ref() {
+						"dll" => ctx.try_add_assembly_path(path),
+						_ => continue,
+					}
 				}
 			}
 		}
 
+		for dir in search_paths {
+			add_paths(&mut ctx, dir.as_ref());
+		}
 		ctx
 	}
 
-	fn bump(&self) -> &'l Bump {
-		unsafe { std::mem::transmute(&self.bump) }
+	#[inline]
+	pub fn loaded_assemblies(&self) -> &FxHashMap<&'l AssemblyName<'l>, &'l Assembly<'l>> {
+		&self.loaded_assemblies
 	}
 
-	#[inline(never)]
+	#[inline]
+	pub fn reachable_assemblies(&self) -> &FxHashMap<&'l AssemblyName<'l>, PathBuf> {
+		&self.reachable_assemblies
+	}
+
+	#[inline]
+	pub fn load_assembly(&mut self, path: impl AsRef<Path>) -> Result<&'l Assembly<'l>, AssemblyLoadingError> {
+		Assembly::load_from_path(self, &path)
+	}
+
+	#[inline]
+	pub fn resolve_assembly_name(&self, name: &AssemblyName) -> AssemblyResolverResult<'l> {
+		self.resolver.resolve_assembly_name(self, name)
+	}
+
+	#[inline]
+	pub(crate) fn bump(&self) -> &'l Bump {
+		unsafe { std::mem::transmute(&*self.bump) }
+	}
+
+	#[inline]
+	pub(crate) fn loaded_assemblies_mut(&mut self) -> &mut FxHashMap<&'l AssemblyName<'l>, &'l Assembly<'l>> {
+		&mut self.loaded_assemblies
+	}
+
+	#[inline]
 	fn try_add_assembly_path(&mut self, path: PathBuf) {
-		#[cfg(feature = "memmap2")] let Ok(file) = std::fs::File::open(&path) else { return };
-		#[cfg(feature = "memmap2")] let Ok(mem) = (unsafe { memmap2::Mmap::map(&file) }) else { return };
-		#[cfg(feature = "memmap2")] let bytes = mem.as_ref();
-		#[cfg(not(feature = "memmap2"))] let Ok(vec) = std::fs::read(&path) else { return };
-		#[cfg(not(feature = "memmap2"))] let bytes = vec.as_slice();
-
-		let Ok(pe) = PEFile::try_from(bytes) else { return };
-		let Ok(raw) = RawAssembly::try_from(pe) else { return };
-		let Some(tables) = raw.metadata_root().get_heap::<TableHeap>() else { return };
-		let Some(table) = tables.get_table::<AssemblyTable>() else { return };
-		let Ok(name_def) = table.get(0) else { return };
-
-		let bump = self.bump();
-		let Some(blobs) = raw.metadata_root().get_heap::<BlobHeap>() else { return };
-		let Some(strings) = raw.metadata_root().get_heap::<StringHeap>() else { return };
-
-		let Some(public_key) = blobs.get(name_def.public_key) else { return };
-		let Some(culture) = strings.get(name_def.culture) else { return };
-		let Some(name) = strings.get(name_def.name) else { return };
-
-		let name = bump.alloc(AssemblyName {
-			major_version: name_def.major_version,
-			minor_version: name_def.minor_version,
-			build_number: name_def.build_number,
-			revision_number: name_def.revision_number,
-			flags: name_def.flags,
-			public_key: bump.alloc_slice_copy(public_key),
-			name: bump.alloc_str(name),
-			culture: bump.alloc_str(culture),
-		});
-
-		self.assembly_files.insert(name, path);
+		if let Ok(name) = AssemblyName::from_path(self.bump(), &path) {
+			self.reachable_assemblies.insert(name, path);
+		};
 	}
+}
+
+pub enum AssemblyResolverResult<'l> {
+	None,
+	Path(PathBuf),
+	Assembly(&'l Assembly<'l>),
+}
+
+pub trait AssemblyResolver {
+	fn resolve_assembly_name<'l>(&self, ctx: &Context<'l>, name: &AssemblyName) -> AssemblyResolverResult<'l>;
+}
+
+pub struct DefaultAssemblyResolver;
+
+impl AssemblyResolver for DefaultAssemblyResolver {
+	fn resolve_assembly_name<'l>(&self, ctx: &Context<'l>, name: &AssemblyName) -> AssemblyResolverResult<'l> {
+		if let Some(ass) = ctx.loaded_assemblies.get(name) {
+			return AssemblyResolverResult::Assembly(ass);
+		}
+
+		if let Some(path) = ctx.reachable_assemblies.get(name) {
+			return AssemblyResolverResult::Path(path.clone());
+		}
+
+		let mut name = name.clone();
+		if name.flags.contains(AssemblyFlags::RETARGETABLE) {
+			name.version = AssemblyVersion::ZERO;
+		}
+
+		let result = ctx.reachable_assemblies.iter()
+			.filter(|(a, _)| {
+				a.name == name.name &&
+					a.culture == name.culture &&
+					a.version.is_compatible_with(&name.version)
+			})
+			.max_by_key(|(a, _)| a.version);
+
+		return match result {
+			None => AssemblyResolverResult::None,
+			Some((name, path)) => match ctx.loaded_assemblies.get(name) {
+				Some(ass) => AssemblyResolverResult::Assembly(ass),
+				None => AssemblyResolverResult::Path(path.clone())
+			}
+		};
+
+		AssemblyResolverResult::None
+	}
+}
+
+pub(crate) fn fmt_reachable_assemblies(map: &FxHashMap<&AssemblyName, PathBuf>, fmt: &mut Formatter<'_>) -> std::fmt::Result {
+	let mut dbg = fmt.debug_set();
+	for (key, value) in map.iter() {
+		dbg.entry(&format_args!("{key}: {value:?}"));
+	}
+	dbg.finish()
 }

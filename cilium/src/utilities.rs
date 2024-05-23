@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::io::{Cursor, Error, ErrorKind, Read, Seek, SeekFrom};
 use std::iter::repeat_with;
 use std::mem::{MaybeUninit, size_of};
@@ -165,7 +165,7 @@ pub(crate) fn read_compressed_u32(stream: &mut Cursor<&[u8]>) -> Result<u32, Err
 	}
 }
 
-pub(crate) fn display_as_hex(bytes: &[u8], fmt: &mut Formatter<'_>) -> std::fmt::Result {
+pub(crate) fn fmt_as_hex(bytes: &[u8], fmt: &mut Formatter<'_>) -> std::fmt::Result {
 	write!(fmt, "[")?;
 	for b in bytes {
 		write!(fmt, "{:X}", b)?;
@@ -173,10 +173,18 @@ pub(crate) fn display_as_hex(bytes: &[u8], fmt: &mut Formatter<'_>) -> std::fmt:
 	write!(fmt, "]")
 }
 
-pub(crate) fn display_as_values<K, V: Debug, S>(map: &HashMap<K, V, S>, fmt: &mut Formatter<'_>) -> std::fmt::Result {
+pub(crate) fn fmt_debug_values<K, V: Debug, S>(map: &HashMap<K, V, S>, fmt: &mut Formatter<'_>) -> std::fmt::Result {
 	let mut dbg = fmt.debug_list();
 	for value in map.values() {
 		dbg.entry(value);
+	}
+	dbg.finish()
+}
+
+pub(crate) fn fmt_as_display<T: Display>(values: &[T], fmt: &mut Formatter<'_>) -> std::fmt::Result {
+	let mut dbg = fmt.debug_list();
+	for v in values {
+		dbg.entry(&format_args!("{v}"));
 	}
 	dbg.finish()
 }
