@@ -11,7 +11,7 @@ pub struct StringHeap<'l> {
 impl<'l> TryFrom<&'l [u8]> for StringHeap<'l> {
 	type Error = Error;
 	fn try_from(data: &'l [u8]) -> Result<Self, Self::Error> {
-		match data.as_ref() {
+		match data {
 			[0, ..] => Ok(Self { data }),
 			_ => Err(ErrorKind::InvalidData.into()),
 		}
@@ -20,7 +20,7 @@ impl<'l> TryFrom<&'l [u8]> for StringHeap<'l> {
 
 impl<'l> StringHeap<'l> {
 	pub fn get(&self, idx: StringIndex) -> Option<&'l str> {
-		let slice = self.data.as_ref().get(idx.0..)?;
+		let slice = self.data.get(idx.0..)?;
 		let end = slice.iter().position(|c| *c == 0)?;
 		std::str::from_utf8(&slice[..end]).ok()
 	}

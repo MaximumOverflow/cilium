@@ -25,20 +25,22 @@ fn main() {
 
 	let start = SystemTime::now();
 	let mut ctx = Context::new([
-		"C:/Program Files/dotnet/sdk/8.0.101",
-		"C:/Program Files/dotnet/shared/Microsoft.NETCore.App/8.0.1",
-		"C:/Program Files/dotnet/shared/Microsoft.WindowsDesktop.App/8.0.1"
+		"C:/Program Files/dotnet/sdk/8.0.204",
+		"C:/Program Files/dotnet/shared/Microsoft.NETCore.App/8.0.4",
+		"C:/Program Files/dotnet/shared/Microsoft.WindowsDesktop.App/8.0.4",
 	]);
 
-	let assembly = ctx.load_assembly(
-		"C:/Program Files/dotnet/sdk/8.0.101/NuGet.Protocol.dll"
+	let _assembly = ctx.load_assembly(
+		"C:/Program Files/dotnet/sdk/8.0.204/NuGet.Protocol.dll"
 	).unwrap();
-	
+
 	println! {
 		"Schema time: {:?}, RAM: {}MB",
 		start.elapsed().unwrap(),
 		memory_stats().unwrap().virtual_mem as f32 / 1000000.0,
 	}
 
-	println!("{:#?}", ctx);
+	println!("Loaded assemblies: {}", ctx.loaded_assemblies().len());
+
+	// println!("{:#?}", ctx.assembly_resolver());
 }

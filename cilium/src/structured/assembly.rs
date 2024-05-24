@@ -8,7 +8,8 @@ use derivative::Derivative;
 use crate::raw::heaps::{BlobHeap, StringHeap};
 use crate::raw::heaps::table::{Assembly as AssemblyRow, AssemblyFlags, AssemblyRef as AssemblyRefRow, TableHeap};
 use crate::raw::pe::PEFile;
-use crate::structured::{AssemblyResolverResult, Context};
+use crate::structured::{Context};
+use crate::structured::resolver::AssemblyResolverResult;
 
 #[derive(Debug, Default, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct AssemblyVersion {
@@ -45,7 +46,7 @@ impl Display for AssemblyVersion {
 	}
 }
 
-#[derive(Clone, Eq, PartialEq, Hash, Derivative)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Derivative)]
 #[derivative(Debug)]
 pub struct AssemblyName<'l> {
 	pub version: AssemblyVersion,
@@ -57,6 +58,16 @@ pub struct AssemblyName<'l> {
 }
 
 impl<'l> AssemblyName<'l> {
+	pub fn from_owned(owned: &OwnedAssemblyName, bump: &'l Bump) -> Self {
+		Self {
+			version: owned.version,
+			flags: owned.flags,
+			public_key: bump.alloc_slice_copy(&owned.public_key),
+			name: bump.alloc_str(&owned.name),
+			culture: bump.alloc_str(&owned.culture),
+		}
+	}
+
 	#[inline]
 	pub(crate) fn from_path(bump: &'l Bump, path: impl AsRef<Path>) -> std::io::Result<&'l AssemblyName> {
 		#[inline(never)]
