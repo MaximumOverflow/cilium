@@ -1,0 +1,9 @@
+language = "C++"
+tab_width = 4
+style = "both"
+namespace = "cilium"
+usize_is_size_t = true
+include_guard = "CILIUM_BINDINGS"
+
+[parse.expand]
+crates = ["cilium"]

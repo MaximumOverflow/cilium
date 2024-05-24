@@ -95,6 +95,7 @@ impl<'l> MetadataRoot<'l> {
 	}
 }
 
+#[repr(C)]
 #[derive(Debug)]
 pub struct Assembly<'l> {
 	pe_file: PEFile<'l>,
@@ -103,6 +104,7 @@ pub struct Assembly<'l> {
 }
 
 bitflags! {
+	#[repr(C)]
 	#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 	pub struct RuntimeFlags: u32 {
 		const IL_ONLY = 0x1;
@@ -157,14 +159,14 @@ impl<'l> TryFrom<PEFile<'l>> for Assembly<'l> {
 	}
 }
 
-impl Assembly<'_> {
-	pub fn pe_file(&self) -> &PEFile {
+impl<'l> Assembly<'l> {
+	pub fn pe_file(&self) -> &PEFile<'l> {
 		&self.pe_file
 	}
 	pub fn cli_header(&self) -> CLIHeader {
 		self.cli_header
 	}
-	pub fn metadata_root(&self) -> &MetadataRoot {
+	pub fn metadata_root(&self) -> &MetadataRoot<'l> {
 		&self.metadata_root
 	}
 }
@@ -215,5 +217,47 @@ impl<'l> GetHeap<TableHeap<'l>> for MetadataRoot<'l> {
 			MetadataHeap::Table(h) => Some(h),
 			_ => None,
 		});
+	}
+}
+
+pub(crate) mod ffi {
+	use crate::raw::assembly::Assembly;
+	use crate::raw::heaps::{BlobHeap, GuidHeap, StringHeap, UserStringHeap};
+	use crate::raw::heaps::table::TableHeap;
+	use crate::raw::pe::PEFile;
+
+	#[no_mangle]
+	pub unsafe extern fn cilium_raw_Assembly_create(pe: PEFile) -> &mut Assembly {
+		Box::leak(Box::new(Assembly::try_from(pe).unwrap()))
+	}
+
+	#[no_mangle]
+	pub unsafe extern fn cilium_raw_Assembly_destroy(assembly: &mut Assembly) {
+		drop(Box::from_raw(assembly))
+	}
+
+	#[no_mangle]
+	pub unsafe extern fn cilium_raw_Assembly_get_heap_Blob<'l, 'r: 'l>(assembly: &'r Assembly<'l>) -> Option<&'r BlobHeap<'l>> {
+		assembly.metadata_root().get_heap::<BlobHeap>()
+	}
+
+	#[no_mangle]
+	pub unsafe extern fn cilium_raw_Assembly_get_heap_Guid<'l, 'r: 'l>(assembly: &'r Assembly<'l>) -> Option<&'r GuidHeap<'l>> {
+		assembly.metadata_root().get_heap::<GuidHeap>()
+	}
+
+	#[no_mangle]
+	pub unsafe extern fn cilium_raw_Assembly_get_heap_String<'l, 'r: 'l>(assembly: &'r Assembly<'l>) -> Option<&'r StringHeap<'l>> {
+		assembly.metadata_root().get_heap::<StringHeap>()
+	}
+
+	#[no_mangle]
+	pub unsafe extern fn cilium_raw_Assembly_get_heap_UserString<'l, 'r: 'l>(assembly: &'r Assembly<'l>) -> Option<&'r UserStringHeap<'l>> {
+		assembly.metadata_root().get_heap::<UserStringHeap>()
+	}
+
+	#[no_mangle]
+	pub unsafe extern fn cilium_raw_Assembly_get_heap_Table<'l, 'r: 'l>(assembly: &'r Assembly<'l>) -> Option<&'r TableHeap<'l>> {
+		assembly.metadata_root().get_heap::<TableHeap>()
 	}
 }

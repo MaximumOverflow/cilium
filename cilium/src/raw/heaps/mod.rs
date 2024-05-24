@@ -50,6 +50,7 @@ impl<'l> MetadataHeap<'l> {
 	}
 }
 
+#[repr(transparent)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct StringIndex(pub usize);
 
@@ -62,7 +63,7 @@ impl FromByteStream for StringIndex {
 	}
 }
 
-impl From<StringIndex> for metadata_token::String {
+impl From<StringIndex> for metadata_token::StringToken {
 	#[inline]
 	fn from(value: StringIndex) -> Self {
 		Self(value.0)
@@ -72,10 +73,11 @@ impl From<StringIndex> for metadata_token::String {
 impl From<StringIndex> for metadata_token::MetadataToken {
 	#[inline]
 	fn from(value: StringIndex) -> Self {
-		metadata_token::String(value.0).into()
+		metadata_token::StringToken(value.0).into()
 	}
 }
 
+#[repr(transparent)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct BlobIndex(pub usize);
 
@@ -88,6 +90,7 @@ impl FromByteStream for BlobIndex {
 	}
 }
 
+#[repr(transparent)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct GuidIndex(pub usize);
 

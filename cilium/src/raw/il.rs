@@ -10,7 +10,7 @@ use crate::raw::FromByteStream;
 use crate::raw::heaps::BlobHeap;
 use crate::raw::heaps::table::StandAloneSigTable;
 use crate::raw::indices::coded_index::TypeDefOrRef;
-use crate::raw::indices::metadata_token::{MetadataToken, StandAloneSig};
+use crate::raw::indices::metadata_token::{MetadataToken, StandAloneSigToken};
 use crate::raw::indices::sizes::IndexSizes;
 use crate::utilities::{impl_from_byte_stream, read_bytes_slice_from_stream, read_compressed_u32};
 
@@ -517,6 +517,7 @@ define_opcodes! {
 }
 
 bitflags! {
+	#[repr(C)]
 	#[derive(Debug, Default, Copy, Clone, Eq, PartialEq, Hash)]
 	pub struct SkipFaultCheckFlags: u8 {
 		const TYPE_CHECK = 0x1;
@@ -622,7 +623,7 @@ impl<'l> MethodBody<'l> {
 					let Ok(local_var_token) = MetadataToken::try_from(local_var_token) else {
 						return Err(Error::new(ErrorKind::InvalidData, "Invalid metadata token"));
 					};
-					let Ok(StandAloneSig(local_var_token)) = local_var_token.try_into() else {
+					let Ok(StandAloneSigToken(local_var_token)) = local_var_token.try_into() else {
 						return Err(Error::new(ErrorKind::InvalidData, "Invalid metadata token"));
 					};
 					let sig = signatures.get(local_var_token - 1).unwrap().signature;
@@ -876,6 +877,7 @@ impl Debug for TypeSignatureSequence<'_> {
 }
 
 bitflags! {
+	#[repr(C)]
 	#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 	pub struct CallingConvention: u8 {
 		const DEFAULT = 0x0;

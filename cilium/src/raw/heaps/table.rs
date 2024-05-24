@@ -1,9 +1,10 @@
 use std::io::{Cursor, Read};
-use std::sync::Arc;
+use std::ops::Deref;
 
 use bitflags::bitflags;
 use derivative::Derivative;
 use paste::paste;
+use crate::ffi::containers::{Slice, BoxSlice, Box};
 
 use crate::raw::heaps::{BlobIndex, GuidIndex, StringIndex};
 use crate::raw::heaps::table::private::GetTable;
@@ -28,6 +29,7 @@ macro_rules! define_flags {
 	) => {
 		bitflags! {
 			$(#[$outer])*
+			#[repr(C)]
 			$vis struct $BitFlags: $T {
 				$(
 					$(#[$inner $($args)*])*
@@ -95,6 +97,7 @@ macro_rules! decl_tables {
 	)=> {
 		paste! {
 			$(
+				#[repr(C)]
 				#[derive(Copy, Clone)]
 				#[allow(dead_code)]
 				$vis struct $row {
@@ -121,16 +124,19 @@ macro_rules! decl_tables {
 					}
 				}
 
-				#[derive(Clone)]
+				#[repr(C)]
+				#[derive(Copy, Clone)]
 				#[derive(Derivative)] // Temporary
 				#[derivative(Debug)]
 				$vis struct [<$row Table>]<'l> {
 					len: usize,
 					row_size: usize,
 					#[derivative(Debug="ignore")]
-					data: &'l [u8],
+					data: Slice<'l, u8>,
+					// TODO Fix this lifetime
+					// Keep private. Don't leak this because its lifetime is wrong.
 					#[derivative(Debug="ignore")]
-					idx_sizes: Arc<IndexSizes>,
+					idx_sizes: &'l IndexSizes,
 				}
 
 				impl<'l> [<$row Table>]<'l> {
@@ -146,13 +152,13 @@ macro_rules! decl_tables {
 
 					#[inline]
 					pub fn rows(&'l self) -> impl Iterator<Item=std::io::Result<$row>> + 'l {
-						let mut cursor = Cursor::new(self.data);
+						let mut cursor = Cursor::new(self.data.as_ref());
 						(0..self.len).map(move |_| $row::read(&mut cursor, &self.idx_sizes))
 					}
 
 					pub fn get(&'l self, idx: usize) -> std::io::Result<$row> {
 						let offset = self.row_size * idx;
-						let Some(data) = self.data.get(offset..offset+self.row_size) else {
+						let Some(data) = self.data.as_ref().get(offset..offset+self.row_size) else {
 							return Err(std::io::ErrorKind::InvalidInput.into());
 						};
 						let mut cursor = Cursor::new(data);
@@ -165,12 +171,13 @@ macro_rules! decl_tables {
 						Self {
 							len: 0,
 							row_size: 0,
-							data: &[],
-							idx_sizes: IndexSizes::zero(),
+							data: Slice::from(&[]),
+							idx_sizes: IndexSizes::ZERO,
 						}
 					}
 				}
 
+				#[repr(transparent)]
 				#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 				$vis struct [<$row Index>](usize);
 
@@ -220,6 +227,7 @@ macro_rules! decl_tables {
 				}
 			)*
 
+			#[repr(C)]
 			#[derive(Debug, Clone)]
 			pub enum Table<'l> {
 				$($row([<$row Table>]<'l>)),*
@@ -278,7 +286,9 @@ macro_rules! decl_tables {
 					}
 
 					let mut offset = stream.position() as usize;
-					let idx_sizes = IndexSizes::new(heap_sizes, table_sizes.as_slice().try_into().unwrap());
+					let idx_sizes = {
+						Box::from(IndexSizes::new(heap_sizes, table_sizes.as_slice().try_into().unwrap()))
+					};
 
 					let mut tables: Vec<Table> = Vec::with_capacity(table_count);
 					for i in enumerate_set_bits(valid) {
@@ -301,8 +311,8 @@ macro_rules! decl_tables {
 									[<$row Table>] {
 										len,
 										row_size,
-										data,
-										idx_sizes: idx_sizes.clone(),
+										data: data.into(),
+										idx_sizes: unsafe { std::mem::transmute(Box::deref(&idx_sizes)) },
 									}
 								}),
 							)*
@@ -313,9 +323,39 @@ macro_rules! decl_tables {
 					Ok(Self {
 						major_version,
 						minor_version,
-						tables,
+						tables: tables.into(),
+						index_sizes: idx_sizes,
 					})
 				}
+			}
+
+			#[allow(dead_code, non_snake_case)]
+			pub(crate) mod ffi {
+				use crate::raw::heaps::table::*;
+
+				$(
+					#[no_mangle]
+					pub unsafe extern fn [<cilium_raw_TableHeap_get_table_ $row>]<'l, 'r>(
+						heap: &'r TableHeap<'l>,
+					) -> Option<&'r [<$row Table>]<'l>> {
+						heap.get_table::<$row>()
+					}
+
+					#[no_mangle]
+					pub unsafe extern fn [<cilium_raw_ $row Table_get_row>](
+						table: &[<$row Table>],
+						idx: usize,
+						out_row: *mut $row
+					) -> bool {
+						match table.get(idx) {
+							Ok(row) => {
+								std::ptr::write(out_row, row);
+								true
+							},
+							Err(_) => false,
+						}
+					}
+				)*
 			}
 		}
 	};
@@ -774,11 +814,13 @@ impl SizeOf<AssemblyHashAlgorithm> for IndexSizes {
 
 impl_from_byte_stream!(AssemblyHashAlgorithm);
 
+#[repr(C)]
 #[derive(Debug)]
 pub struct TableHeap<'l> {
 	major_version: u8,
 	minor_version: u8,
-	tables: Vec<Table<'l>>,
+	index_sizes: Box<IndexSizes>,
+	tables: BoxSlice<Table<'l>>,
 }
 
 impl<'l> TableHeap<'l> {

@@ -38,6 +38,7 @@ fn main() {
 
 	start = SystemTime::now();
 
+
 	let assembly = ctx.load_assembly(
 		// "System.Private.CoreLib.dll"
 		"C:/Program Files/dotnet/shared/Microsoft.NETCore.App/8.0.4/Microsoft.CSharp.dll",

@@ -3,19 +3,21 @@ use std::io::{Error, ErrorKind};
 use std::mem::size_of;
 
 use uuid::Uuid;
+use crate::ffi::containers::Slice;
 
 use crate::raw::heaps::GuidIndex;
 
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct GuidHeap<'l> {
-	data: &'l [u8],
+	data: Slice<'l, u8>,
 }
 
 impl<'l> TryFrom<&'l [u8]> for GuidHeap<'l> {
 	type Error = Error;
 	fn try_from(data: &'l [u8]) -> Result<Self, Self::Error> {
 		match data.len() % size_of::<Uuid>() == 0 {
-			true => Ok(Self { data }),
+			true => Ok(Self { data: data.into() }),
 			false => Err(ErrorKind::InvalidData.into()),
 		}
 	}
@@ -51,5 +53,25 @@ impl Debug for GuidHeap<'_> {
 			dbg.entry(&guid);
 		}
 		dbg.finish()
+	}
+}
+
+pub(crate) mod ffi {
+	use uuid::Uuid;
+	use crate::raw::heaps::{GuidHeap, GuidIndex};
+
+	#[no_mangle]
+	pub unsafe extern fn cilium_raw_GuidHeap_get(
+		heap: &GuidHeap,
+		idx: GuidIndex,
+		out_guid: &mut Uuid,
+	) -> bool {
+		match heap.get(idx) {
+			None => false,
+			Some(guid) => {
+				*out_guid = guid;
+				true
+			}
+		}
 	}
 }

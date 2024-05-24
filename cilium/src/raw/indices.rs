@@ -1,6 +1,7 @@
 pub mod metadata_token {
 	use std::fmt::{Debug, Formatter};
 	use std::io::{Cursor, ErrorKind};
+	use paste::paste;
 
 	use crate::utilities::FromByteStream;
 
@@ -47,27 +48,29 @@ pub mod metadata_token {
 				}
 			}
 
-			$(
-				#[repr(transparent)]
-				#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-				pub struct $id(pub usize);
+			paste! {
+				$(
+					#[repr(transparent)]
+					#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+					pub struct [<$id Token>](pub usize);
 
-				impl From<$id> for MetadataToken {
-					fn from(value: $id) -> Self {
-						MetadataToken(((MetadataTokenKind::$id as u32) << 24) | value.0 as u32)
-					}
-				}
-
-				impl TryFrom<MetadataToken> for $id {
-					type Error = ();
-					fn try_from(value: MetadataToken) -> Result<Self, Self::Error> {
-						match value.kind() {
-							MetadataTokenKind::$id => Ok(Self(value.index())),
-							_ => Err(()),
+					impl From<[<$id Token>]> for MetadataToken {
+						fn from(value: [<$id Token>]) -> Self {
+							MetadataToken(((MetadataTokenKind::$id as u32) << 24) | value.0 as u32)
 						}
 					}
-				}
-			)*
+
+					impl TryFrom<MetadataToken> for [<$id Token>] {
+						type Error = ();
+						fn try_from(value: MetadataToken) -> Result<Self, Self::Error> {
+							match value.kind() {
+								MetadataTokenKind::$id => Ok(Self(value.index())),
+								_ => Err(()),
+							}
+						}
+					}
+				)*
+			}
 		};
 	}
 	impl Debug for MetadataToken {
@@ -125,6 +128,7 @@ pub mod metadata_token {
 }
 
 pub mod coded_index {
+	use paste::paste;
 	use std::io::{Cursor, ErrorKind, Read};
 
 	use crate::raw::heaps::table::TableKind;
@@ -199,16 +203,18 @@ pub mod coded_index {
 					}
 				}
 
-				$(
-					impl TryFrom<$id> for crate::raw::indices::metadata_token::$variant {
-						type Error = ();
-						fn try_from(value: $id) -> Result<Self, Self::Error> {
-							use crate::raw::indices::metadata_token::*;
-							let token = MetadataToken::from(value);
-							$variant::try_from(token)
+				paste! {
+					$(
+						impl TryFrom<$id> for crate::raw::indices::metadata_token::[<$variant Token>] {
+							type Error = ();
+							fn try_from(value: $id) -> Result<Self, Self::Error> {
+								use crate::raw::indices::metadata_token::*;
+								let token = MetadataToken::from(value);
+								[<$variant Token>]::try_from(token)
+							}
 						}
-					}
-				)*
+					)*
+				}
 			)*
 
 			const TABLES: &[&[TableKind]] = &[$(&[$(TableKind::$variant),*]),*];
@@ -312,11 +318,10 @@ pub mod coded_index {
 }
 
 pub(crate) mod sizes {
-	use std::sync::{Arc, OnceLock};
 	use crate::raw::heaps::{BlobIndex, GuidIndex, StringIndex};
-
 	use crate::raw::indices::coded_index::CodedIndexKind;
 
+	#[repr(C)]
 	#[derive(Debug)]
 	pub struct IndexSizes {
 		pub guid: usize,
@@ -331,7 +336,15 @@ pub(crate) mod sizes {
 	}
 
 	impl IndexSizes {
-		pub fn new(heap_sizes: u8, table_lens: &[u32; 55]) -> Arc<Self> {
+		pub const ZERO: &'static IndexSizes = &IndexSizes {
+			guid: 0,
+			blob: 0,
+			string: 0,
+			coded: [0; 14],
+			tables: [0; 55],
+		};
+
+		pub fn new(heap_sizes: u8, table_lens: &[u32; 55]) -> Self {
 			let sizes = Self {
 				blob: 2 + 2 * ((heap_sizes & 0x4) != 0) as usize,
 				guid: 2 + 2 * ((heap_sizes & 0x2) != 0) as usize,
@@ -352,12 +365,7 @@ pub(crate) mod sizes {
 					coded
 				}
 			};
-			Arc::new(sizes)
-		}
-
-		pub fn zero() -> Arc<Self> {
-			static ZERO: OnceLock<Arc<IndexSizes>> = OnceLock::new();
-			ZERO.get_or_init(|| Self::new(0, &[0; 55])).clone()
+			sizes
 		}
 	}
 	impl AsRef<()> for IndexSizes {

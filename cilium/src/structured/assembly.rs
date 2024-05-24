@@ -13,6 +13,7 @@ use crate::structured::Context;
 use crate::structured::resolver::AssemblyResolverResult;
 use crate::structured::types::{load_type_defs, populate_type_defs, Type};
 
+#[repr(C)]
 #[derive(Debug, Default, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct AssemblyVersion {
 	pub major_version: u16,
@@ -363,6 +364,7 @@ impl<'l> Assembly<'l> {
 	}
 }
 
+#[repr(C)]
 #[derive(Debug)]
 pub enum AssemblyLoadingError {
 	IoError(std::io::Error),

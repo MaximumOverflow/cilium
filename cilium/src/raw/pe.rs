@@ -3,6 +3,7 @@ use std::io::{Cursor, Error, ErrorKind};
 use std::mem::size_of;
 use std::ops::Range;
 
+use crate::ffi::containers::{BoxSlice, Slice};
 use crate::utilities::{FromByteStream, impl_from_byte_stream, read_bytes_slice_from_stream};
 
 #[repr(C)]
@@ -10,7 +11,7 @@ use crate::utilities::{FromByteStream, impl_from_byte_stream, read_bytes_slice_f
 pub struct PEFile<'l> {
 	pub dos_header: DOSHeader,
 	pub pe_header: PEHeader,
-	pub sections: Vec<Section<'l>>,
+	pub sections: BoxSlice<Section<'l>>,
 }
 
 impl<'l> PEFile<'l> {
@@ -19,7 +20,7 @@ impl<'l> PEFile<'l> {
 		let idx = rva - section.header.virtual_address;
 		Some((
 			section,
-			&section.data[idx as usize..],
+			&section.data.as_ref()[idx as usize..],
 			idx as usize,
 		))
 	}
@@ -50,7 +51,7 @@ impl<'l> TryFrom<&'l [u8]> for PEFile<'l> {
 				let data = read_bytes_slice_from_stream(&mut stream, header.size_of_raw_data as usize)?;
 				sections.push(Section {
 					header,
-					data,
+					data: data.into(),
 				});
 				stream.set_position(position);
 			}
@@ -66,7 +67,7 @@ impl<'l> TryFrom<&'l [u8]> for PEFile<'l> {
 		Ok(Self {
 			dos_header,
 			pe_header,
-			sections,
+			sections: sections.into(),
 		})
 	}
 }
@@ -98,7 +99,7 @@ pub struct DOSHeader {
 impl_from_byte_stream!(DOSHeader, 0x5A4D);
 
 #[repr(C)]
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct PEHeader {
 	pub magic: u32, // Must be 0x4550
 	pub image_file_header: ImageFileHeader,
@@ -215,7 +216,7 @@ pub struct ImageOptionalHeader64 {
 impl_from_byte_stream!(ImageOptionalHeader64, 0x020B);
 
 #[repr(C, u16)]
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum ImageOptionalHeader {
 	None = 0x00,
 	PE32(ImageOptionalHeader32) = 0x010B,
@@ -286,10 +287,11 @@ pub struct SectionHeader {
 
 impl_from_byte_stream!(SectionHeader);
 
+#[repr(C)]
 #[derive(Clone, Eq, PartialEq)]
 pub struct Section<'l> {
 	pub header: SectionHeader,
-	pub data: &'l [u8],
+	pub data: Slice<'l, u8>,
 }
 
 impl<'l> Section<'l> {
@@ -304,5 +306,21 @@ impl Debug for Section<'_> {
 		dbg.field("header", &self.header);
 		dbg.field("data", &format_args!("[u8; {:#X}]", self.data.len()));
 		dbg.finish()
+	}
+}
+
+pub(crate) mod ffi {
+	use crate::ffi::containers::Slice;
+	use crate::raw::pe::PEFile;
+
+	#[no_mangle]
+	pub unsafe extern fn cilium_raw_PEFile_create(bytes: Slice<u8>) -> PEFile {
+		let pe = crate::raw::pe::PEFile::try_from(bytes.as_ref()).unwrap();
+		PEFile::from(pe)
+	}
+
+	#[no_mangle]
+	pub unsafe extern fn cilium_raw_PEFile_destroy(pe: &mut PEFile) {
+		std::ptr::drop_in_place(pe)
 	}
 }

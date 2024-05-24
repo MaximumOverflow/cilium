@@ -23,3 +23,9 @@ nohash-hasher = "0.2.0"
 memmap2 = { version = "0.9.4", optional = true }
 tracing = { version = "0.1.40", optional = true }
 bumpalo = { version = "3.16.0", features = ["collections"] }
+
+[build-dependencies]
+cbindgen = "0.26.0"
+
+[lib]
+crate-type = ["lib", "cdylib"]
