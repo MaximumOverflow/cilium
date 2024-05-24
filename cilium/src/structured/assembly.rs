@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::fmt::{Display, Formatter};
 use std::io::ErrorKind;
 use std::path::Path;
@@ -8,8 +9,9 @@ use derivative::Derivative;
 use crate::raw::heaps::{BlobHeap, StringHeap};
 use crate::raw::heaps::table::{Assembly as AssemblyRow, AssemblyFlags, AssemblyRef as AssemblyRefRow, TableHeap};
 use crate::raw::pe::PEFile;
-use crate::structured::{Context};
+use crate::structured::Context;
 use crate::structured::resolver::AssemblyResolverResult;
+use crate::structured::types::{load_type_defs, populate_type_defs, Type};
 
 #[derive(Debug, Default, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct AssemblyVersion {
@@ -208,8 +210,10 @@ impl<'l> From<&'l AssemblyName<'l>> for AssemblyRef<'l> {
 #[derivative(Debug)]
 pub struct Assembly<'l> {
 	name: &'l AssemblyName<'l>,
-	#[derivative(Debug(format_with = "crate::utilities::fmt_as_display"))]
-	refs: &'l [AssemblyRef<'l>],
+	#[derivative(Debug(format_with = "crate::utilities::fmt_display_cell"))]
+	refs: Cell<&'l [AssemblyRef<'l>]>,
+	#[derivative(Debug(format_with = "crate::utilities::fmt_debug_cell"))]
+	type_defs: Cell<&'l [Type<'l>]>,
 }
 
 impl<'l> Assembly<'l> {
@@ -218,7 +222,11 @@ impl<'l> Assembly<'l> {
 	}
 
 	pub fn refs(&self) -> &'l [AssemblyRef<'l>] {
-		self.refs
+		self.refs.get()
+	}
+
+	pub fn types(&self) -> &'l [Type<'l>] {
+		self.type_defs.get()
 	}
 
 	#[inline]
@@ -278,73 +286,79 @@ impl<'l> Assembly<'l> {
 
 			let assembly = bump.alloc(Assembly {
 				name,
-				refs: &[],
+				refs: Cell::new(&[]),
+				type_defs: Cell::new(&[]),
 			});
-
-			let ptr = assembly as *mut Assembly;
 
 			// Insert it early to fix circular dependencies
 			ctx.loaded_assemblies_mut().insert(name, assembly);
 
+			// Load assembly refs
+			{
+				let mut assembly_refs = vec![];
+				if let Some(table) = tables.get_table::<AssemblyRefRow>() {
+					assembly_refs.reserve_exact(table.len());
+					for ass_ref in table.rows() {
+						let ass_ref = ass_ref?;
+						let public_key = blobs.get(ass_ref.public_key).ok_or(ErrorKind::NotFound)?;
+						let culture = strings.get(ass_ref.culture).ok_or(ErrorKind::NotFound)?;
+						let name = strings.get(ass_ref.name).ok_or(ErrorKind::NotFound)?;
 
-			let mut assembly_refs = vec![];
-			if let Some(refs) = tables.get_table::<AssemblyRefRow>() {
-				assembly_refs.reserve_exact(refs.len());
-				for ass_ref in refs.rows() {
-					let ass_ref = ass_ref?;
-					let public_key = blobs.get(ass_ref.public_key).ok_or(ErrorKind::NotFound)?;
-					let culture = strings.get(ass_ref.culture).ok_or(ErrorKind::NotFound)?;
-					let name = strings.get(ass_ref.name).ok_or(ErrorKind::NotFound)?;
+						let ass_name = AssemblyName {
+							version: AssemblyVersion {
+								major_version: ass_ref.major_version,
+								minor_version: ass_ref.minor_version,
+								build_number: ass_ref.build_number,
+								revision_number: ass_ref.revision_number,
+							},
+							flags: ass_ref.flags,
+							public_key,
+							culture,
+							name,
+						};
 
-					let ass_name = AssemblyName {
-						version: AssemblyVersion {
-							major_version: ass_ref.major_version,
-							minor_version: ass_ref.minor_version,
-							build_number: ass_ref.build_number,
-							revision_number: ass_ref.revision_number,
-						},
-						flags: ass_ref.flags,
-						public_key,
-						culture,
-						name,
-					};
-
-					match ctx.resolve_assembly_name(&ass_name) {
-						AssemblyResolverResult::Path(path) => {
-							let assembly = ctx.load_assembly(path)?;
-							assembly_refs.push(assembly.into());
-						}
-						AssemblyResolverResult::Assembly(ass) => {
-							assembly_refs.push(ass.into());
-						}
-						AssemblyResolverResult::None => {
-							let name: &AssemblyName = bump.alloc(AssemblyName {
-								version: AssemblyVersion {
-									major_version: ass_ref.major_version,
-									minor_version: ass_ref.minor_version,
-									build_number: ass_ref.build_number,
-									revision_number: ass_ref.revision_number,
-								},
-								flags: ass_ref.flags,
-								public_key: bump.alloc_slice_copy(public_key),
-								name: bump.alloc_str(name),
-								culture: bump.alloc_str(culture),
-							});
-							assembly_refs.push(name.into());
+						match ctx.resolve_assembly_name(&ass_name) {
+							AssemblyResolverResult::Path(path) => {
+								let assembly = ctx.load_assembly(path)?;
+								assembly_refs.push(assembly.into());
+							}
+							AssemblyResolverResult::Assembly(ass) => {
+								assembly_refs.push(ass.into());
+							}
+							AssemblyResolverResult::None => {
+								let name: &AssemblyName = bump.alloc(AssemblyName {
+									version: AssemblyVersion {
+										major_version: ass_ref.major_version,
+										minor_version: ass_ref.minor_version,
+										build_number: ass_ref.build_number,
+										revision_number: ass_ref.revision_number,
+									},
+									flags: ass_ref.flags,
+									public_key: bump.alloc_slice_copy(public_key),
+									name: bump.alloc_str(name),
+									culture: bump.alloc_str(culture),
+								});
+								assembly_refs.push(name.into());
+							}
 						}
 					}
+
+					assert_eq!(assembly_refs.len(), table.len());
 				}
+				assembly.refs.set(bump.alloc_slice_copy(&assembly_refs));
 			}
 
-			unsafe {
-				std::ptr::write(ptr, Assembly {
-					name,
-					refs: bump.alloc_slice_copy(&assembly_refs),
-				});
+			// Load type defs
+			{
+				let types = load_type_defs(bump, tables, *strings)?;
+				assembly.type_defs.set(types);
 			}
+
+			populate_type_defs(bump, *blobs, *strings, tables, assembly)?;
 
 			Ok(assembly)
 		}
+
 		load_from_path(ctx, path.as_ref())
 	}
 }

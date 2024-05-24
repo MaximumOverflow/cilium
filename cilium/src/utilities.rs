@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::io::{Cursor, Error, ErrorKind, Read, Seek, SeekFrom};
@@ -181,10 +182,20 @@ pub(crate) fn fmt_debug_values<K, V: Debug, S>(map: &HashMap<K, V, S>, fmt: &mut
 	dbg.finish()
 }
 
-pub(crate) fn fmt_as_display<T: Display>(values: &[T], fmt: &mut Formatter<'_>) -> std::fmt::Result {
+pub(crate) fn fmt_display<T: Display>(values: &[T], fmt: &mut Formatter<'_>) -> std::fmt::Result {
 	let mut dbg = fmt.debug_list();
 	for v in values {
 		dbg.entry(&format_args!("{v}"));
 	}
 	dbg.finish()
+}
+
+#[inline]
+pub(crate) fn fmt_debug_cell<T: Debug>(names: &Cell<&[T]>, fmt: &mut Formatter) -> std::fmt::Result {
+	Debug::fmt(names.get(), fmt)
+}
+
+#[inline]
+pub(crate) fn fmt_display_cell<T: Display>(names: &Cell<&[T]>, fmt: &mut Formatter) -> std::fmt::Result {
+	fmt_display(names.get(), fmt)
 }

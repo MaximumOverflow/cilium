@@ -6,7 +6,6 @@ use bumpalo::Bump;
 use derivative::Derivative;
 use fxhash::FxHashMap;
 use rust_search::SearchBuilder;
-use tracing::{debug, info};
 
 use crate::raw::heaps::table::AssemblyFlags;
 use crate::structured::assembly::{Assembly, AssemblyName, AssemblyVersion, OwnedAssemblyName};
@@ -79,7 +78,6 @@ impl AssemblyResolver for DefaultAssemblyResolver {
 		};
 
 		let names = self.filtered_names.entry(name.name.to_string()).or_insert_with(|| {
-			debug!("Enumerating assembly names for {:?}", name.name);
 			let mut names = Vec::with_capacity(paths.len());
 			for path in &*paths {
 				self.bump.reset();

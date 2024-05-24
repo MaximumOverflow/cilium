@@ -312,7 +312,7 @@ pub mod coded_index {
 }
 
 pub(crate) mod sizes {
-	use std::sync::Arc;
+	use std::sync::{Arc, OnceLock};
 	use crate::raw::heaps::{BlobIndex, GuidIndex, StringIndex};
 
 	use crate::raw::indices::coded_index::CodedIndexKind;
@@ -353,6 +353,11 @@ pub(crate) mod sizes {
 				}
 			};
 			Arc::new(sizes)
+		}
+
+		pub fn zero() -> Arc<Self> {
+			static ZERO: OnceLock<Arc<IndexSizes>> = OnceLock::new();
+			ZERO.get_or_init(|| Self::new(0, &[0; 55])).clone()
 		}
 	}
 	impl AsRef<()> for IndexSizes {

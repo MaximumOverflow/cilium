@@ -23,15 +23,24 @@ fn setup_global_subscriber() -> impl Drop {
 fn main() {
 	let _guard = setup_global_subscriber();
 
-	let start = SystemTime::now();
+	let mut start = SystemTime::now();
 	let mut ctx = Context::new([
 		"C:/Program Files/dotnet/sdk/8.0.204",
 		"C:/Program Files/dotnet/shared/Microsoft.NETCore.App/8.0.4",
 		"C:/Program Files/dotnet/shared/Microsoft.WindowsDesktop.App/8.0.4",
 	]);
 
-	let _assembly = ctx.load_assembly(
-		"C:/Program Files/dotnet/sdk/8.0.204/NuGet.Protocol.dll"
+	println! {
+		"Context creation time: {:?}, RAM: {}MB",
+		start.elapsed().unwrap(),
+		memory_stats().unwrap().virtual_mem as f32 / 1000000.0,
+	}
+
+	start = SystemTime::now();
+
+	let assembly = ctx.load_assembly(
+		// "System.Private.CoreLib.dll"
+		"C:/Program Files/dotnet/shared/Microsoft.NETCore.App/8.0.4/Microsoft.CSharp.dll",
 	).unwrap();
 
 	println! {
@@ -42,5 +51,5 @@ fn main() {
 
 	println!("Loaded assemblies: {}", ctx.loaded_assemblies().len());
 
-	// println!("{:#?}", ctx.assembly_resolver());
+	// println!("{:#?}", assembly);
 }

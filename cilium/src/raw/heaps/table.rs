@@ -157,6 +157,17 @@ macro_rules! decl_tables {
 					}
 				}
 
+				impl Default for [<$row Table>]<'_> {
+					fn default() -> Self {
+						Self {
+							len: 0,
+							row_size: 0,
+							data: &[],
+							idx_sizes: IndexSizes::zero(),
+						}
+					}
+				}
+
 				#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 				$vis struct [<$row Index>](usize);
 
@@ -515,8 +526,8 @@ decl_tables! {
 
 	pub struct TypeDef: 0x02 {
 		pub flags: TypeAttributes,
-		pub type_name: StringIndex,
-		pub type_namespace: StringIndex,
+		pub name: StringIndex,
+		pub namespace: StringIndex,
 		pub extends: TypeDefOrRef,
 		pub field_list: FieldIndex,
 		pub method_list: MethodDefIndex,
