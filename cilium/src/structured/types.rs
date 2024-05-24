@@ -199,7 +199,7 @@ pub(super) fn load_type_defs<'l>(
 #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
 pub(super) fn populate_type_defs<'l>(
 	bump: &'l Bump,
-	blobs: BlobHeap,
+	_blobs: BlobHeap,
 	strings: StringHeap,
 	tables: &TableHeap,
 	assembly: &'l Assembly<'l>,

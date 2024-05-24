@@ -1,7 +1,13 @@
 [package]
 name = "cilium"
-version = "0.1.0"
+version = "0.0.0"
 edition = "2021"
+license = "Apache-2.0"
+authors = ["Massimo Bertozzi"]
+keywords = ["dotnet", "coreclr"]
+categories = ["encoding", "parsing"]
+repository = "https://github.com/MaximumOverflow/cilium"
+description = "An experimental Rust library for interfacing with Microsoft's CLI assembly format."
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -10,11 +16,10 @@ uuid = "1.8.0"
 fxhash = "0.2.1"
 paste = "1.0.15"
 rust_search = "2.1.0"
-bumpalo = { version = "3.16.0", features = ["collections"] }
 bitflags = "2.5.0"
 derivative = "2.2.0"
 owning_ref = "0.4.1"
 nohash-hasher = "0.2.0"
-cilium-derive = { path = "../cilium-derive" }
 memmap2 = { version = "0.9.4", optional = true }
 tracing = { version = "0.1.40", optional = true }
+bumpalo = { version = "3.16.0", features = ["collections"] }

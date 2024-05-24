@@ -5,8 +5,6 @@ use bitflags::bitflags;
 use derivative::Derivative;
 use paste::paste;
 
-use cilium_derive::FromRepr;
-
 use crate::raw::heaps::{BlobIndex, GuidIndex, StringIndex};
 use crate::raw::heaps::table::private::GetTable;
 use crate::raw::indices::coded_index::*;
@@ -142,6 +140,11 @@ macro_rules! decl_tables {
 					}
 
 					#[inline]
+					pub const fn is_empty(&self) -> bool {
+						self.len == 0
+					}
+
+					#[inline]
 					pub fn rows(&'l self) -> impl Iterator<Item=std::io::Result<$row>> + 'l {
 						let mut cursor = Cursor::new(self.data);
 						(0..self.len).map(move |_| $row::read(&mut cursor, &self.idx_sizes))
@@ -222,10 +225,20 @@ macro_rules! decl_tables {
 				$($row([<$row Table>]<'l>)),*
 			}
 
-			#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, FromRepr)]
+			#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 			pub enum TableKind {
 				$($row = $discriminant,)*
 				$($enum_name = $enum_discriminant,)*
+			}
+
+			impl TableKind {
+				pub fn from_repr(discriminant: usize) -> Option<Self> {
+					match discriminant {
+						$($discriminant => Some(TableKind::$row),)*
+						$($enum_discriminant => Some(TableKind::$enum_name),)*
+						_ => None,
+					}
+				}
 			}
 
 			impl<'l> TryFrom<&'l [u8]> for TableHeap<'l> {
@@ -729,7 +742,7 @@ decl_tables! {
 }
 
 #[repr(u32)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, FromRepr)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum AssemblyHashAlgorithm {
 	None = 0x0000,
 	MD5 = 0x8003,
@@ -737,6 +750,20 @@ pub enum AssemblyHashAlgorithm {
 	SHA256 = 0x800C,
 	SHA384 = 0x800D,
 	SHA512 = 0x800E,
+}
+
+impl AssemblyHashAlgorithm {
+	pub fn from_repr(discriminant: u32) -> Option<Self> {
+		match discriminant {
+			0x0000 => Some(Self::None),
+			0x8003 => Some(Self::MD5),
+			0x8004 => Some(Self::SHA1),
+			0x800C => Some(Self::SHA256),
+			0x800D => Some(Self::SHA384),
+			0x800E => Some(Self::SHA512),
+			_ => None,
+		}
+	}
 }
 
 impl SizeOf<AssemblyHashAlgorithm> for IndexSizes {

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["cilium", "cilium-derive", "experiments"]
+members = ["cilium", "experiments"]
 
 [profile.lto]
 inherits = "release"

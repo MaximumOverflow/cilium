@@ -32,7 +32,7 @@ impl AssemblyVersion {
 	#[inline]
 	pub fn is_compatible_with(&self, other: &AssemblyVersion) -> bool {
 		*self == Self::ZERO || *other == Self::ZERO ||
-			(self.major_version == other.major_version && self.minor_version >= self.minor_version)
+			(self.major_version == other.major_version && self.minor_version >= other.minor_version)
 	}
 }
 
@@ -74,7 +74,7 @@ impl<'l> AssemblyName<'l> {
 	pub(crate) fn from_path(bump: &'l Bump, path: impl AsRef<Path>) -> std::io::Result<&'l AssemblyName> {
 		#[inline(never)]
 		fn from_path<'l>(bump: &'l Bump, path: &Path) -> std::io::Result<&'l AssemblyName<'l>> {
-			#[cfg(feature = "memmap2")] let file = std::fs::File::open(&path)?;
+			#[cfg(feature = "memmap2")] let file = std::fs::File::open(path)?;
 			#[cfg(feature = "memmap2")] let mem = unsafe { memmap2::Mmap::map(&file) }?;
 			#[cfg(feature = "memmap2")] let bytes = mem.as_ref();
 			#[cfg(not(feature = "memmap2"))] let vec = std::fs::read(&path)?;

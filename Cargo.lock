@@ -47,11 +47,10 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "cilium"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "bitflags",
  "bumpalo",
- "cilium-derive",
  "derivative",
  "fxhash",
  "memmap2",
@@ -61,15 +60,6 @@ dependencies = [
  "rust_search",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "cilium-derive"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.64",
 ]
 
 [[package]]

@@ -104,7 +104,7 @@ impl AssemblyResolver for DefaultAssemblyResolver {
 				let name = AssemblyName::from_owned(ass, &self.bump);
 				match ctx.loaded_assemblies().get(&name) {
 					Some(ass) => AssemblyResolverResult::Assembly(ass),
-					None => AssemblyResolverResult::Path(self.names[&*ass].to_path_buf())
+					None => AssemblyResolverResult::Path(self.names[ass].to_path_buf())
 				}
 			}
 		};

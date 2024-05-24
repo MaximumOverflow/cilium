@@ -651,7 +651,7 @@ impl<'l> MethodBody<'l> {
 
 				Ok(Self { max_stack_size, init_locals, code, locals })
 			},
-			_ => return Err(Error::new(ErrorKind::InvalidData, "Invalid method header")),
+			_ => Err(Error::new(ErrorKind::InvalidData, "Invalid method header")),
 		}
 	}
 }
@@ -919,5 +919,18 @@ impl<'l> MethodSignature<'l> {
 				parameter_types: TypeSignatureSequence::read_n(stream, index_sizes, param_count)?,
 			}
 		)
+	}
+
+
+	pub fn calling_convention(&self) -> CallingConvention {
+		self.calling_convention
+	}
+
+	pub fn return_type(&self) -> &TypeSignature<'l> {
+		&self.return_type
+	}
+
+	pub fn parameter_types(&self) -> &TypeSignatureSequence<'l> {
+		&self.parameter_types
 	}
 }

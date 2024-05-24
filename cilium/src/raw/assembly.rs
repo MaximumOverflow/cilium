@@ -40,7 +40,7 @@ pub struct MetadataRoot<'l> {
 impl<'l> MetadataRoot<'l> {
 	#[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
 	pub fn read(data: &'l [u8]) -> std::io::Result<Self> {
-		let mut stream = Cursor::new(data.as_ref());
+		let mut stream = Cursor::new(data);
 		if u32::read(&mut stream, &())? != 0x424A5342 {
 			return Err(ErrorKind::InvalidData.into());
 		}
@@ -141,13 +141,13 @@ impl<'l> TryFrom<PEFile<'l>> for Assembly<'l> {
 		let Some((_, data, _)) = pe.resolve_rva(rva) else {
 			return Err(ErrorKind::InvalidData.into());
 		};
-		let mut cursor = Cursor::new(data.as_ref());
+		let mut cursor = Cursor::new(data);
 		let cli_header = CLIHeader::read(&mut cursor, &())?;
 
 		let Some((_, data, _)) = pe.resolve_rva(cli_header.metadata.virtual_address) else {
 			return Err(ErrorKind::InvalidData.into());
 		};
-		let metadata_root = MetadataRoot::read(&data)?;
+		let metadata_root = MetadataRoot::read(data)?;
 
 		Ok(Self {
 			pe_file: pe,
